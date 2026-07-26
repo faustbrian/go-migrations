@@ -1,0 +1,29 @@
+package conformance // import "github.com/faustbrian/golib/pkg/migrations/conformance"
+
+Package conformance provides the reusable behavioral test suite every migration
+backend must pass without depending on its execution engine.
+
+FUNCTIONS
+
+func Run(t *testing.T, harness Harness)
+    Run executes the engine-neutral migration behavior contract.
+
+
+TYPES
+
+type Harness struct {
+	NewRunner            func(*testing.T, fstest.MapFS) *migrations.Runner
+	Exec                 func(*testing.T, string)
+	TransactionalUp      string
+	TransactionalDown    string
+	NoTransactionUp      string
+	NoTransactionDown    string
+	TransactionalFailure string
+	NoTransactionFailure string
+	RemovePartialEffects string
+}
+    Harness supplies engine-specific SQL and isolated runner construction.
+    NewRunner must return runners sharing one fresh database when called more
+    than once with the same *testing.T and isolated databases for different
+    subtests. Exec is used only to remove reviewed partial effects before an
+    explicit rolled-back recovery decision.

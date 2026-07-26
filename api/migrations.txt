@@ -1,0 +1,493 @@
+package migrations // import "github.com/faustbrian/golib/pkg/migrations"
+
+Package migrations provides engine-neutral database migration contracts.
+
+VARIABLES
+
+var (
+	// ErrInvalidBaseline indicates malformed reviewed baseline metadata.
+	ErrInvalidBaseline = errors.New("invalid schema baseline")
+	// ErrBaselineMismatch indicates live schema drift from the reviewed contract.
+	ErrBaselineMismatch = errors.New("schema does not match reviewed baseline")
+	// ErrBaselineExists indicates that owned migration history is not empty.
+	ErrBaselineExists = errors.New("migration baseline already exists")
+	// ErrBaselineVersionConflict indicates Go migrations at or below the
+	// baseline cutoff.
+	ErrBaselineVersionConflict = errors.New("go migration conflicts with baseline version")
+	// ErrBaselineUnsupported indicates a backend without baseline conformance.
+	ErrBaselineUnsupported = errors.New("migration backend does not support baselines")
+)
+var (
+	// ErrInvalidVersion indicates that a migration version is zero or malformed.
+	ErrInvalidVersion = errors.New("invalid migration version")
+	// ErrInvalidName indicates that a migration name is not canonical snake case.
+	ErrInvalidName = errors.New("invalid migration name")
+	// ErrInvalidTransactionMode indicates an unknown transaction mode.
+	ErrInvalidTransactionMode = errors.New("invalid transaction mode")
+	// ErrEmptyUpSQL indicates that a migration has no forward operation.
+	ErrEmptyUpSQL = errors.New("migration up SQL is empty")
+	// ErrInvalidChecksum indicates malformed or unsupported checksum text.
+	ErrInvalidChecksum = errors.New("invalid migration checksum")
+)
+var (
+	// ErrInvalidRecord indicates malformed owned-ledger data.
+	ErrInvalidRecord = errors.New("invalid migration record")
+	// ErrDirty indicates an interrupted or partially applied migration.
+	ErrDirty = errors.New("dirty migration history")
+	// ErrChecksumMismatch indicates an applied migration was modified.
+	ErrChecksumMismatch = errors.New("migration checksum mismatch")
+	// ErrRenamedMigration indicates an applied version now has another name.
+	ErrRenamedMigration = errors.New("applied migration was renamed")
+	// ErrDeletedMigration indicates an applied migration is absent from source.
+	ErrDeletedMigration = errors.New("applied migration was deleted")
+	// ErrReorderedHistory indicates non-monotonic or non-prefix history.
+	ErrReorderedHistory = errors.New("migration history was reordered")
+	// ErrInvalidTarget indicates an impossible or ambiguous plan target.
+	ErrInvalidTarget = errors.New("invalid migration target")
+	// ErrIrreversible indicates that rollback SQL was not provided.
+	ErrIrreversible = errors.New("migration is irreversible")
+)
+var (
+	// ErrInvalidRecovery indicates malformed recovery input.
+	ErrInvalidRecovery = errors.New("invalid dirty migration recovery")
+	// ErrRecoveryMismatch indicates that source identity differs from the
+	// operator-reviewed recovery request.
+	ErrRecoveryMismatch = errors.New("dirty migration recovery identity mismatch")
+	// ErrNoDirtyMigration indicates there is no matching unresolved outcome.
+	ErrNoDirtyMigration = errors.New("dirty migration not found")
+	// ErrRecoveryUnsupported indicates a backend without recovery conformance.
+	ErrRecoveryUnsupported = errors.New("migration backend does not support recovery")
+	// ErrRecoveryConflict indicates more than one dirty migration in the ledger.
+	ErrRecoveryConflict = errors.New("multiple dirty migrations require recovery")
+)
+var (
+	// ErrInvalidRunner indicates missing or inconsistent runner dependencies.
+	ErrInvalidRunner = errors.New("invalid migration runner")
+	// ErrBackendResult indicates an engine violated the public backend contract.
+	ErrBackendResult = errors.New("invalid migration backend result")
+)
+var (
+	// ErrInvalidSource indicates an unusable filesystem source configuration.
+	ErrInvalidSource = errors.New("invalid migration source")
+	// ErrInvalidFilename indicates a non-canonical migration filename.
+	ErrInvalidFilename = errors.New("invalid migration filename")
+	// ErrInvalidFormat indicates malformed or ambiguous migration directives.
+	ErrInvalidFormat = errors.New("invalid migration format")
+	// ErrInvalidEncoding indicates non-UTF-8, NUL-containing, or oversized input.
+	ErrInvalidEncoding = errors.New("invalid migration encoding")
+	// ErrUnexpectedSourceEntry indicates a non-migration entry in the source.
+	ErrUnexpectedSourceEntry = errors.New("unexpected migration source entry")
+	// ErrDuplicateVersion indicates that two source files claim one identity.
+	ErrDuplicateVersion = errors.New("duplicate migration version")
+)
+
+TYPES
+
+type Action uint8
+    Action identifies the operation represented by a plan step.
+
+const (
+	// ActionApply executes a migration's up SQL.
+	ActionApply Action = iota + 1
+	// ActionRollback executes a migration's down SQL.
+	ActionRollback
+)
+type Backend interface {
+	Acquire(context.Context) (Session, error)
+}
+    Backend is the replaceable migration-engine conformance boundary.
+
+    Session.Apply must return only after both execution and owned-ledger
+    persistence have reached an explicit recoverable outcome. Implementations
+    must leave a dirty record when non-transactional execution has an uncertain
+    or partial result.
+
+type Baseline struct {
+	// Has unexported fields.
+}
+    Baseline is an immutable reviewed schema assertion for adopting an existing
+    database without replaying historical migrations.
+
+func NewBaseline(version Version, name string, fingerprint Checksum) (Baseline, error)
+    NewBaseline validates a reviewed baseline contract.
+
+func (baseline Baseline) Fingerprint() Checksum
+    Fingerprint returns the expected canonical schema digest.
+
+func (baseline Baseline) Name() string
+    Name returns the reviewed baseline contract name.
+
+func (baseline Baseline) Version() Version
+    Version returns the immutable cutoff before all Go-owned migrations.
+
+type Checksum struct {
+	// Has unexported fields.
+}
+    Checksum is the SHA-256 digest of the canonical migration representation.
+
+func ChecksumData(canonical []byte) Checksum
+    ChecksumData computes the stable SHA-256 representation of canonical bytes.
+    It is intended for package-defined contracts such as schema fingerprints;
+    migration identity uses its stricter built-in canonical representation.
+
+func ParseChecksum(value string) (Checksum, error)
+    ParseChecksum decodes the stable ledger representation of a checksum.
+
+func (checksum Checksum) GoString() string
+    GoString prevents checksum internals from becoming an accidental public
+    serialization contract while keeping diagnostics useful.
+
+func (checksum Checksum) String() string
+    String returns the algorithm-qualified ledger representation.
+
+type Event struct {
+	// Has unexported fields.
+}
+    Event is an immutable structured diagnostic suitable for logging and tracing
+    adapters. SQL text is deliberately excluded.
+
+func (event Event) Duration() time.Duration
+    Duration returns elapsed time for completed or failed operations.
+
+func (event Event) Err() error
+    Err returns the operation failure without exposing SQL contents.
+
+func (event Event) Operation() Operation
+    Operation returns the lifecycle operation.
+
+func (event Event) Phase() Phase
+    Phase returns the lifecycle phase.
+
+func (event Event) Version() Version
+    Version returns the affected migration version, or zero for job operations.
+
+type FSSource struct {
+	// Has unexported fields.
+}
+    FSSource loads canonical SQL migrations from one fs.FS directory. It works
+    with embed.FS and rejects unrelated entries so packaging mistakes fail
+    closed.
+
+func NewFSSource(sourceFS fs.FS, root string) (*FSSource, error)
+    NewFSSource constructs a source rooted at a valid fs.FS path.
+
+func (source *FSSource) Load(ctx context.Context) ([]Migration, error)
+    Load reads, validates, and sorts the complete migration history.
+
+type Migration struct {
+	// Has unexported fields.
+}
+    Migration is an immutable canonical SQL migration.
+
+    Fields are intentionally private so callers and execution engines cannot
+    mutate identity or persisted checksum state after validation.
+
+func NewMigration(
+	version Version,
+	name string,
+	transactionMode TransactionMode,
+	upSQL string,
+	downSQL string,
+) (Migration, error)
+    NewMigration validates and constructs a canonical migration.
+
+func (migration Migration) Checksum() Checksum
+    Checksum returns the immutable content digest.
+
+func (migration Migration) DownSQL() string
+    DownSQL returns the canonical rollback SQL, or an empty string when the
+    migration is irreversible.
+
+func (migration Migration) Name() string
+    Name returns the canonical migration name without version or extension.
+
+func (migration Migration) TransactionMode() TransactionMode
+    TransactionMode returns the execution transaction policy.
+
+func (migration Migration) UpSQL() string
+    UpSQL returns the canonical forward SQL.
+
+func (migration Migration) Version() Version
+    Version returns the immutable migration version.
+
+type Observer interface {
+	Observe(context.Context, Event)
+}
+    Observer consumes structured migration events.
+
+type Operation uint8
+    Operation identifies an observable migration lifecycle operation.
+
+const (
+	// OperationLock acquires exclusive migration-job ownership.
+	OperationLock Operation = iota + 1
+	// OperationApply applies one migration and persists its outcome.
+	OperationApply
+	// OperationRollback rolls back one migration and removes its ledger record.
+	OperationRollback
+	// OperationBaseline validates and records one reviewed existing schema.
+	OperationBaseline
+	// OperationRecover resolves one explicitly reviewed dirty outcome.
+	OperationRecover
+	// OperationUnlock releases exclusive migration-job ownership.
+	OperationUnlock
+)
+type Option func(*Runner) error
+    Option configures a Runner.
+
+func WithObserver(observer Observer) Option
+    WithObserver installs a structured event observer. Observer panics are
+    contained so diagnostics cannot change migration outcomes.
+
+func WithUnlockTimeout(timeout time.Duration) Option
+    WithUnlockTimeout bounds best-effort lock release after the job context is
+    canceled. Release always uses a detached context so cancellation cannot skip
+    cleanup.
+
+type Phase uint8
+    Phase identifies the lifecycle phase of an emitted operation.
+
+const (
+	// PhaseStarted is emitted immediately before an operation.
+	PhaseStarted Phase = iota + 1
+	// PhaseCompleted is emitted after a successful operation.
+	PhaseCompleted
+	// PhaseFailed is emitted after a failed operation.
+	PhaseFailed
+)
+type Plan struct {
+	// Has unexported fields.
+}
+    Plan is a deterministic execution plan derived from source and ledger state.
+
+func PlanDown(available []Migration, records []Record, count uint64) (Plan, error)
+    PlanDown validates the complete persisted history and returns exactly count
+    rollback steps in descending version order. It never crosses a baseline.
+
+func PlanUp(available []Migration, records []Record) (Plan, error)
+    PlanUp validates the complete persisted history and returns pending
+    migrations in ascending version order. Any ambiguity fails closed.
+
+func (plan Plan) Steps() []Step
+    Steps returns a copy so callers cannot mutate a validated plan.
+
+type Record struct {
+	// Has unexported fields.
+}
+    Record is an immutable entry read from public.go_schema_migrations.
+
+func NewRecord(
+	kind RecordKind,
+	version Version,
+	name string,
+	checksum Checksum,
+	appliedAt time.Time,
+	duration time.Duration,
+	dirty bool,
+) (Record, error)
+    NewRecord validates data crossing the owned-ledger boundary.
+
+func (record Record) AppliedAt() time.Time
+    AppliedAt returns when execution or baseline recording completed.
+
+func (record Record) Checksum() Checksum
+    Checksum returns the persisted migration or schema fingerprint.
+
+func (record Record) Dirty() bool
+    Dirty reports whether the operation has an unresolved partial outcome.
+
+func (record Record) Duration() time.Duration
+    Duration returns the measured operation duration.
+
+func (record Record) Kind() RecordKind
+    Kind returns whether this record is a migration or baseline.
+
+func (record Record) Name() string
+    Name returns the persisted canonical name.
+
+func (record Record) Version() Version
+    Version returns the record's immutable version.
+
+type RecordKind uint8
+    RecordKind distinguishes an executed migration from an explicit schema
+    baseline in the owned ledger.
+
+const (
+	// RecordKindMigration is a migration executed by this package.
+	RecordKindMigration RecordKind = iota + 1
+	// RecordKindBaseline is a reviewed pre-existing schema assertion.
+	RecordKindBaseline
+)
+type Recovery struct {
+	// Has unexported fields.
+}
+    Recovery is an immutable, checksum-bound operator decision.
+
+func NewRecovery(version Version, checksum Checksum, action RecoveryAction) (Recovery, error)
+    NewRecovery validates an explicit dirty-state resolution request.
+
+func (recovery Recovery) Action() RecoveryAction
+    Action returns the operator's verified outcome.
+
+func (recovery Recovery) Checksum() Checksum
+    Checksum returns the reviewed source checksum.
+
+func (recovery Recovery) Version() Version
+    Version returns the reviewed migration version.
+
+type RecoveryAction uint8
+    RecoveryAction is an explicit operator assertion about a dirty migration.
+
+const (
+	// RecoveryMarkApplied certifies that the migration's full up SQL is present.
+	RecoveryMarkApplied RecoveryAction = iota + 1
+	// RecoveryMarkRolledBack certifies that all partial effects were removed.
+	RecoveryMarkRolledBack
+)
+type RecoveryResult struct {
+	// Has unexported fields.
+}
+    RecoveryResult is the persisted outcome of resolving one dirty migration.
+
+func (result RecoveryResult) Action() RecoveryAction
+    Action returns the applied recovery decision.
+
+func (result RecoveryResult) Record() Record
+    Record returns the resolved ledger record. MarkRolledBack returns the dirty
+    record that was removed; MarkApplied returns its new clean representation.
+
+type Result struct {
+	// Has unexported fields.
+}
+    Result describes the migrations completed by one runner invocation.
+
+func (result Result) Records() []Record
+    Records returns a copy of completed ledger records.
+
+type Runner struct {
+	// Has unexported fields.
+}
+    Runner coordinates source validation, exclusive locking, history
+    revalidation, planning, and backend execution.
+
+func NewRunner(source Source, backend Backend, options ...Option) (*Runner, error)
+    NewRunner constructs an engine-neutral migration runner.
+
+func (runner *Runner) Baseline(ctx context.Context, baseline Baseline) (record Record, err error)
+    Baseline validates and records an existing schema without replaying any
+    historical framework migrations. The owned ledger must be empty, and every
+    Go-owned source migration must have a version strictly above the baseline.
+
+func (runner *Runner) Down(ctx context.Context, count uint64) (result Result, err error)
+    Down rolls back exactly count applied migrations, newest first. The source
+    and complete ledger history are revalidated while holding the lock.
+
+func (runner *Runner) Plan(ctx context.Context) (plan Plan, err error)
+    Plan returns a locked dry-run plan without executing migration SQL.
+
+func (runner *Runner) Recover(
+	ctx context.Context,
+	recovery Recovery,
+) (result RecoveryResult, err error)
+    Recover resolves one checksum-matched dirty migration after the operator has
+    verified that its effects are either fully applied or fully removed.
+
+func (runner *Runner) Status(ctx context.Context) (status Status, err error)
+    Status returns a locked, internally consistent source and ledger snapshot.
+
+func (runner *Runner) Up(ctx context.Context) (result Result, err error)
+    Up applies all pending migrations. Source and ledger history are revalidated
+    while holding the lock, eliminating plan-to-execution races.
+
+type Session interface {
+	Prepare(context.Context) error
+	Records(context.Context) ([]Record, error)
+	Apply(context.Context, Migration) (Record, error)
+	Rollback(context.Context, Migration) (Record, error)
+	Release(context.Context) error
+}
+    Session represents exclusive migration-job ownership bound to one physical
+    database connection. Ledger preparation, reads, and execution all happen
+    through this value so connection loss and lock loss cannot be separated from
+    execution and a one-connection pool cannot deadlock during preparation.
+
+type Source interface {
+	Load(context.Context) ([]Migration, error)
+}
+    Source loads a complete immutable migration history.
+
+type State uint8
+    State is the deterministic relationship between source and owned ledger.
+
+const (
+	// StateBaseline is the reviewed adoption boundary for an existing schema.
+	StateBaseline State = iota + 1
+	// StateApplied is a clean, checksum-matched applied migration.
+	StateApplied
+	// StateDirty is an explicitly unresolved partial or uncertain outcome.
+	StateDirty
+	// StatePending is a source migration not yet represented in the ledger.
+	StatePending
+)
+type Status struct {
+	// Has unexported fields.
+}
+    Status is an immutable, version-ordered snapshot.
+
+func BuildStatus(available []Migration, records []Record) (Status, error)
+    BuildStatus validates source and persisted identity while preserving dirty
+    entries as explicit status instead of hiding them behind a generic error.
+
+func (status Status) Entries() []StatusEntry
+    Entries returns a copy so callers cannot mutate the validated snapshot.
+
+type StatusEntry struct {
+	// Has unexported fields.
+}
+    StatusEntry is one immutable source or ledger status item.
+
+func (entry StatusEntry) AppliedAt() time.Time
+    AppliedAt returns the persisted completion time, or zero for pending work.
+
+func (entry StatusEntry) Checksum() Checksum
+    Checksum returns the source checksum or persisted baseline fingerprint.
+
+func (entry StatusEntry) Duration() time.Duration
+    Duration returns the persisted execution duration, or zero for pending work.
+
+func (entry StatusEntry) Name() string
+    Name returns the canonical migration or baseline name.
+
+func (entry StatusEntry) State() State
+    State returns the item's deterministic state.
+
+func (entry StatusEntry) Version() Version
+    Version returns the migration or baseline version.
+
+type Step struct {
+	// Has unexported fields.
+}
+    Step is one immutable action in a deterministic plan.
+
+func (step Step) Action() Action
+    Action returns the step operation.
+
+func (step Step) Migration() Migration
+    Migration returns the immutable migration for this step.
+
+type TransactionMode uint8
+    TransactionMode controls whether an engine wraps a migration in a database
+    transaction.
+
+const (
+	// TransactionModeDefault executes the migration atomically.
+	TransactionModeDefault TransactionMode = iota
+	// TransactionModeNone permits operations PostgreSQL cannot run in a
+	// transaction. A failed migration in this mode requires explicit recovery.
+	TransactionModeNone
+)
+type Version uint64
+    Version is the immutable, monotonically increasing migration identifier.
+
+func (version Version) String() string
+    String returns the canonical unpadded decimal representation.

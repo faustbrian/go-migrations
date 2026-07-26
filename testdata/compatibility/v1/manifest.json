@@ -1,0 +1,20 @@
+{
+  "contract_version": "v1",
+  "goose_version": "v3.26.0",
+  "migrations": [
+    {
+      "version": 1,
+      "name": "create_historical_widgets",
+      "mode": "transaction",
+      "checksum": "sha256:7b2d2bbcedd48de94dc33f840a0c8dce6dd1d74ecabf6002676fc27515b172f7",
+      "applied": true
+    },
+    {
+      "version": 2,
+      "name": "index_historical_widgets",
+      "mode": "no_transaction",
+      "checksum": "sha256:0fdbdcff7e474b488b6c84b491d44f4cc5aa83f28bb81eaf5ddaaed54f4576d6",
+      "applied": false
+    }
+  ]
+}

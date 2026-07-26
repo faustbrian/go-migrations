@@ -1,0 +1,72 @@
+package postgres // import "github.com/faustbrian/golib/pkg/migrations/postgres"
+
+Package postgres implements the owned PostgreSQL ledger and lock backend.
+
+VARIABLES
+
+var (
+	// ErrInvalidConfig indicates unusable PostgreSQL backend configuration.
+	ErrInvalidConfig = errors.New("invalid PostgreSQL migration configuration")
+	// ErrLockNotHeld indicates that advisory ownership was lost or duplicated.
+	ErrLockNotHeld = errors.New("PostgreSQL migration advisory lock not held")
+	// ErrSessionReleased indicates use after lock-session release.
+	ErrSessionReleased = errors.New("PostgreSQL migration session released")
+	// ErrLedgerConflict indicates that owned-ledger state changed unexpectedly.
+	ErrLedgerConflict = errors.New("PostgreSQL migration ledger conflict")
+)
+var ErrInvalidSchemaSnapshot = errors.New("invalid PostgreSQL schema snapshot")
+    ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a
+    reviewed baseline contract.
+
+
+FUNCTIONS
+
+func Fingerprint(objects []SchemaObject) (migrations.Checksum, error)
+    Fingerprint hashes a complete, unambiguous PostgreSQL schema snapshot.
+
+
+TYPES
+
+type Backend struct {
+	// Has unexported fields.
+}
+    Backend owns PostgreSQL preparation and creates connection-bound sessions.
+
+func New(database *sql.DB, options ...Option) (*Backend, error)
+    New constructs the PostgreSQL backend without taking ownership of database.
+
+func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
+    Acquire waits for the stable package advisory lock on one physical
+    connection and returns all subsequent operations bound to that connection.
+
+func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error)
+    Inspect returns the current schema fingerprint for review and baseline
+    contract generation. It does not mutate either migration ledger.
+
+func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, error)
+    InspectObjects returns the canonical catalog objects used for review and
+    fingerprint diagnostics. The package-owned ledger is excluded.
+
+type Option func(*Backend) error
+    Option configures a PostgreSQL backend.
+
+func WithLockRetryInterval(interval time.Duration) Option
+    WithLockRetryInterval controls polling when another job owns the advisory
+    lock. Cancellation is always honored while waiting.
+
+func WithLockTimeout(timeout time.Duration) Option
+    WithLockTimeout bounds advisory-lock polling independently of the caller's
+    broader job deadline. Lock attempts repeat only while another session owns
+    the lock; database errors are returned without retry.
+
+func WithStatementTimeout(timeout time.Duration) Option
+    WithStatementTimeout applies PostgreSQL statement_timeout to each migration
+    transaction or explicit no-transaction execution session.
+
+type SchemaObject struct {
+	Identity   string
+	Definition string
+}
+    SchemaObject is one canonical PostgreSQL catalog identity and definition.
+    Objects are sorted during fingerprinting, so database row order is
+    irrelevant.
