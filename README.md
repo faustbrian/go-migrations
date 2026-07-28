@@ -47,6 +47,19 @@ result, err := runner.Up(ctx)
 Run this code in a dedicated deployment job. Do not run it implicitly in every
 service process.
 
+## Service migrate command
+
+`migrationsservice.New` adapts a caller-constructed `Runner` to the standard
+one-shot `service` migrate role. The caller loads typed configuration, prepares
+only migration dependencies, and explicitly selects the runner operation. The
+adapter adds no migration policy, HTTP listener, management server, readiness
+check, retries, or long-lived resource ownership.
+
+Migration-only components start before the task and stop in reverse order after
+it finishes or fails. A missing runner fails during plan construction. Use a
+dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or
+recovery behavior explicitly according to the reviewed operation.
+
 ## Safety properties
 
 - The complete source and ledger history is validated while an advisory lock is

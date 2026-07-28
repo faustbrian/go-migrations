@@ -1,0 +1,94 @@
+package migrationsservice // import "github.com/faustbrian/golib/pkg/migrations/migrationsservice"
+
+Package migrationsservice adapts an explicit migrations.Runner to the standard
+service migrate command.
+
+The adapter owns no database or migration semantics. Callers load their
+configuration, construct the runner and resource components, and select the
+runner operation. The adapter fixes only the command name, one-shot role,
+task boundary, and cleanup ordering required by service.
+
+VARIABLES
+
+var (
+	// ErrInvalidOptions identifies invalid adapter construction.
+	ErrInvalidOptions = errors.New("invalid migrations service options")
+	// ErrInvalidExecution identifies a prepared migration without a runner.
+	ErrInvalidExecution = errors.New("invalid migrations service execution")
+)
+
+TYPES
+
+type Adapter[C any] struct {
+	// Has unexported fields.
+}
+    Adapter retains one immutable migrate command definition.
+
+func New[C any](options Options[C]) (*Adapter[C], error)
+    New validates and constructs the standard migrate command adapter.
+
+func (adapter *Adapter[C]) Command() service.Command
+    Command returns the standard one-shot migrate registration.
+
+type Execute func(context.Context, *migrations.Runner) error
+    Execute selects one caller-owned migrations.Runner operation.
+
+type Execution struct {
+	// Runner is the concrete migration runner used by Execute.
+	Runner *migrations.Runner
+	// Components acquire migration-only dependencies and release them after the
+	// one-shot task finishes.
+	Components []service.Component
+}
+    Execution contains the prepared runner and its explicit resource lifecycle.
+
+type ExecutionError struct {
+	// Field identifies the invalid execution field.
+	Field string
+	// Reason describes the safe failure category.
+	Reason string
+}
+    ExecutionError identifies an invalid prepared execution.
+
+func (err *ExecutionError) Error() string
+    Error returns a secret-safe execution diagnostic.
+
+func (err *ExecutionError) Unwrap() error
+    Unwrap exposes the stable execution classification.
+
+type Load[C any] func(context.Context, service.Invocation) (C, error)
+    Load resolves caller-owned migration configuration before resource
+    construction.
+
+type Options[C any] struct {
+	// Summary is the one-line migrate command help text.
+	Summary string
+	// Load resolves typed migration configuration.
+	Load Load[C]
+	// Prepare constructs the runner and migration-only components.
+	Prepare Prepare[C]
+	// Execute selects the runner operation without adapter-owned semantics.
+	Execute Execute
+}
+    Options configure the standard migrate command adapter.
+
+type OptionsError struct {
+	// Field identifies the rejected option.
+	Field string
+	// Reason describes the safe failure category.
+	Reason string
+}
+    OptionsError identifies one rejected option.
+
+func (err *OptionsError) Error() string
+    Error returns a secret-safe construction diagnostic.
+
+func (err *OptionsError) Unwrap() error
+    Unwrap exposes the stable option classification.
+
+type Prepare[C any] func(
+	context.Context,
+	service.BuildContext,
+	C,
+) (Execution, error)
+    Prepare constructs only the resources needed by the migrate role.

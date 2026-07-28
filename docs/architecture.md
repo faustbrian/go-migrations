@@ -32,3 +32,12 @@ or telemetry without influencing execution; observer panics are contained.
 Applications using `postgres` should expose its underlying `*sql.DB` to the
 PostgreSQL backend. Neither package needs to import the other, avoiding a cycle.
 `sqlc` remains service-local build tooling and is not runtime migration state.
+
+## Service command boundary
+
+`migrationsservice` depends on `service` and returns its fixed one-shot
+`migrate` command. The adapter accepts caller-owned load, preparation, and
+execution callbacks. Preparation returns a concrete `Runner` plus the
+migration-only lifecycle components; execution selects the runner operation.
+The adapter does not import a database backend, add migration behavior, or
+initialize dependencies used by other service roles.

@@ -25,4 +25,6 @@ generate() {
 
 generate github.com/faustbrian/golib/pkg/migrations "$root/api/migrations.txt"
 generate github.com/faustbrian/golib/pkg/migrations/conformance "$root/api/conformance.txt"
+generate github.com/faustbrian/golib/pkg/migrations/migrationsservice \
+    "$root/api/migrationsservice.txt"
 generate github.com/faustbrian/golib/pkg/migrations/postgres "$root/api/postgres.txt"

@@ -5,8 +5,16 @@ and will use semantic versioning after the first stable release.
 
 ## Unreleased
 
+### Changed
+
+- OpenTelemetry API dependencies now use 1.44.x consistently after adding the
+  service command adapter.
+
 ### Added
 
+- A `migrationsservice` adapter for the standard one-shot `migrate` command,
+  caller-owned runner construction and operation selection, and explicit
+  migration-only resource cleanup.
 - Engine-neutral immutable migration, plan, status, baseline, recovery, event,
   backend, session, and runner contracts.
 - Canonical embedded SQL format with SHA-256 identities and strict parsing.

@@ -11,6 +11,13 @@
 Concurrent jobs are safe: they serialize on a stable PostgreSQL advisory lock
 and re-read history after acquiring it. Service startup must not invoke `Up`.
 
+When the application uses `service`, register `adapter.Command()` as
+`service.Commands.Migrate`. Its load and preparation callbacks must construct
+only the migration source, backend, runner, and explicitly transferred resource
+components. The adapter runs exactly the caller-selected operation as one-shot
+work and cleans those components afterward; it does not retry or choose between
+planning, status, application, rollback, baseline, or recovery.
+
 Set a job deadline, a shorter lock timeout, and a statement timeout appropriate
 for the largest reviewed operation. PostgreSQL statement timeouts must be at
 least one millisecond; smaller values are rejected instead of truncating to the
