@@ -9,8 +9,8 @@ and will use semantic versioning after the first stable release.
 
 - Remove unused CLI-related indirect dependencies from canonical module
   metadata.
-- Require owned sibling modules at local `v0.0.0`; clean external consumers
-  pin each module to an exact main pseudo-version.
+- Pin owned sibling modules to exact resolvable main pseudo-versions so
+  standalone and clean external consumers use immutable dependency content.
 
 - OpenTelemetry API dependencies now use 1.44.x consistently after adding the
   service command adapter.
