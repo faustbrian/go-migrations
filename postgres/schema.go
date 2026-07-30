@@ -1,11 +1,12 @@
 package postgres
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -136,12 +137,12 @@ ORDER BY object_identity, definition`
 // Fingerprint hashes a complete, unambiguous PostgreSQL schema snapshot.
 func Fingerprint(objects []SchemaObject) (migrations.Checksum, error) {
 	canonical := append([]SchemaObject(nil), objects...)
-	sort.Slice(canonical, func(left, right int) bool {
-		if canonical[left].Identity == canonical[right].Identity {
-			return canonical[left].Definition < canonical[right].Definition
+	slices.SortFunc(canonical, func(left, right SchemaObject) int {
+		if identityOrder := cmp.Compare(left.Identity, right.Identity); identityOrder != 0 {
+			return identityOrder
 		}
 
-		return canonical[left].Identity < canonical[right].Identity
+		return cmp.Compare(left.Definition, right.Definition)
 	})
 
 	var builder strings.Builder

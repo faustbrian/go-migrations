@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -108,8 +109,8 @@ func (source *FSSource) Load(ctx context.Context) ([]Migration, error) {
 		migrations = append(migrations, migration)
 	}
 
-	sort.Slice(migrations, func(left, right int) bool {
-		return migrations[left].Version() < migrations[right].Version()
+	slices.SortFunc(migrations, func(left, right Migration) int {
+		return cmp.Compare(left.Version(), right.Version())
 	})
 
 	return migrations, nil

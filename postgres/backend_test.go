@@ -244,6 +244,9 @@ func TestSessionRollsBackTransactionalMigrationAtomically(t *testing.T) {
 	if record.Version() != 1 || record.AppliedAt() != finishedAt {
 		t.Fatalf("Rollback() record = %#v", record)
 	}
+	if record.Duration() != 12*time.Millisecond {
+		t.Fatalf("Rollback() duration = %v, want 12ms", record.Duration())
+	}
 	assertExpectations(t, mock)
 }
 
@@ -441,6 +444,9 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(sub-millisecond statement timeout) error = %v, want ErrInvalidConfig", err)
+	}
+	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(time.Millisecond)); err != nil {
+		t.Fatalf("New(minimum statement timeout) error = %v", err)
 	}
 }
 

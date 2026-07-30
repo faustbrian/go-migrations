@@ -32,3 +32,25 @@ func TestNoTransactionGooseFunctionsCannotBypassLockConnection(t *testing.T) {
 		t.Fatalf("Goose down bypass error = %v", err)
 	}
 }
+
+func TestTransactionalAdapterRejectsNilTransaction(t *testing.T) {
+	t.Parallel()
+
+	migration, err := migrations.NewMigration(
+		1,
+		"transactional",
+		migrations.TransactionModeDefault,
+		"SELECT 1;",
+		"SELECT 2;",
+	)
+	if err != nil {
+		t.Fatalf("NewMigration() error = %v", err)
+	}
+	adapter, err := Compile(migration)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if err := adapter.ApplyTx(context.Background(), nil); !errors.Is(err, ErrUnsupportedMigration) {
+		t.Fatalf("ApplyTx(nil) error = %v, want ErrUnsupportedMigration", err)
+	}
+}

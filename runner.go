@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
-const defaultUnlockTimeout = 30 * time.Second
+const defaultUnlockTimeout time.Duration = 30_000_000_000
 
 var (
 	// ErrInvalidRunner indicates missing or inconsistent runner dependencies.
@@ -240,12 +241,12 @@ func (runner *Runner) Recover(
 	if err := validateAvailableOrder(available); err != nil {
 		return RecoveryResult{}, err
 	}
+	migrationIndex := slices.IndexFunc(available, func(candidate Migration) bool {
+		return candidate.Version() == recovery.Version()
+	})
 	var migration Migration
-	for _, candidate := range available {
-		if candidate.Version() == recovery.Version() {
-			migration = candidate
-			break
-		}
+	if migrationIndex >= 0 {
+		migration = available[migrationIndex]
 	}
 	if migration.Version() == 0 || migration.Checksum() != recovery.Checksum() {
 		return RecoveryResult{}, ErrRecoveryMismatch
@@ -267,7 +268,7 @@ func (runner *Runner) Recover(
 				continue
 			}
 			dirtyCount++
-			if entry.Version() == recovery.Version() && entry.Checksum() == recovery.Checksum() {
+			if entry.Version() == recovery.Version() {
 				matchingDirty = true
 			}
 		}
@@ -609,10 +610,5 @@ func (runner *Runner) observe(ctx context.Context, event Event) {
 }
 
 func elapsed(started time.Time) time.Duration {
-	duration := time.Since(started)
-	if duration < 0 {
-		return 0
-	}
-
-	return duration
+	return max(time.Since(started), 0)
 }

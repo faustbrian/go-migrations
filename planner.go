@@ -171,7 +171,13 @@ func PlanUp(available []Migration, records []Record) (Plan, error) {
 		}
 	}
 
-	steps := make([]Step, 0, len(available)-len(applied))
+	pendingCount := 0
+	for _, migration := range available {
+		if _, exists := applied[migration.Version()]; !exists {
+			pendingCount++
+		}
+	}
+	steps := make([]Step, 0, pendingCount)
 	seenPending := false
 	for _, migration := range available {
 		if _, exists := applied[migration.Version()]; exists {

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	migrations "github.com/faustbrian/golib/pkg/migrations"
 	pressly "github.com/pressly/goose/v3"
@@ -28,12 +27,9 @@ type Adapter struct {
 // Compile translates the owned migration contract to Goose's Go-migration
 // execution shape. Goose never parses canonical files or owns version state.
 func Compile(migration migrations.Migration) (*Adapter, error) {
-	if migration.Version() == 0 ||
-		migration.Name() == "" ||
-		migration.Checksum() == (migrations.Checksum{}) ||
-		strings.TrimSpace(migration.UpSQL()) == "" ||
-		(migration.TransactionMode() != migrations.TransactionModeDefault &&
-			migration.TransactionMode() != migrations.TransactionModeNone) {
+	// Migration owns validation through private fields; its zero value is the
+	// only invalid value callers can construct without NewMigration.
+	if migration.Version() == 0 {
 		return nil, ErrUnsupportedMigration
 	}
 

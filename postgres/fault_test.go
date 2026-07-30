@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"regexp"
 	"testing"
 	"time"
@@ -185,7 +186,7 @@ func TestBackendAndLockFailuresAreExplicit(t *testing.T) {
 	}
 
 	database, mock := faultDatabase(t)
-	backend, err := New(database)
+	backend, err := New(database, WithLockTimeout(time.Second))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -228,6 +229,36 @@ func TestLockQueryCancellationReturnsContextError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
 	if _, err := backend.Acquire(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Acquire() error = %v, want context deadline", err)
+	}
+	assertFaultExpectations(t, mock)
+}
+
+func TestDefaultLockRetryHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
+	database, mock := faultDatabase(t)
+	backend, err := New(database)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	mock.ExpectQuery("pg_try_advisory_lock").
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if _, err := backend.Acquire(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Acquire() error = %v, want context deadline", err)
+	}
+	assertFaultExpectations(t, mock)
+}
+
+func TestStatementTimeoutResetReportsFailure(t *testing.T) {
+	t.Parallel()
+
+	fault := errors.New("reset failed")
+	session, mock := faultSession(t, time.Second)
+	mock.ExpectExec("set_config").WillReturnError(fault)
+	if err := session.resetSessionStatementTimeout(context.Background()); !errors.Is(err, fault) {
+		t.Fatalf("resetSessionStatementTimeout() error = %v, want reset failure", err)
 	}
 	assertFaultExpectations(t, mock)
 }
@@ -359,6 +390,28 @@ func TestFingerprintRejectsAmbiguousSchemaObjects(t *testing.T) {
 	}
 }
 
+func TestFingerprintSortsByIdentityBeforeDefinition(t *testing.T) {
+	t.Parallel()
+
+	fingerprint, err := Fingerprint([]SchemaObject{
+		{Identity: "z", Definition: "a"},
+		{Identity: "a", Definition: "z"},
+	})
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	expected := migrations.ChecksumData([]byte(
+		"go-migrations/postgres-schema/v1\n" +
+			"identity:1:a\n" +
+			"definition:1:z\n" +
+			"identity:1:z\n" +
+			"definition:1:a\n",
+	))
+	if fingerprint != expected {
+		t.Fatalf("Fingerprint() = %s, want identity-primary ordering %s", fingerprint, expected)
+	}
+}
+
 func TestConfigurationAndReleasedSessionGuards(t *testing.T) {
 	t.Parallel()
 
@@ -450,18 +503,19 @@ func TestRecoveryPersistenceOutcomes(t *testing.T) {
 	migration := faultMigration(t, migrations.TransactionModeNone)
 	now := time.Now().UTC()
 	tests := []struct {
-		name   string
-		action migrations.RecoveryAction
-		rows   *sqlmock.Rows
-		err    error
-		target error
+		name         string
+		action       migrations.RecoveryAction
+		rows         *sqlmock.Rows
+		err          error
+		target       error
+		wantDuration time.Duration
 	}{
 		{name: "applied missing", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"started_at"}), target: migrations.ErrNoDirtyMigration},
 		{name: "applied query", action: migrations.RecoveryMarkApplied, err: errors.New("update failed")},
 		{name: "applied future start", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"started_at"}).AddRow(now.Add(time.Hour))},
 		{name: "rolled back missing", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}), target: migrations.ErrNoDirtyMigration},
 		{name: "rolled back query", action: migrations.RecoveryMarkRolledBack, err: errors.New("delete failed")},
-		{name: "rolled back success", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(now, 12)},
+		{name: "rolled back success", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(now, 12), wantDuration: 12 * time.Millisecond},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -486,6 +540,9 @@ func TestRecoveryPersistenceOutcomes(t *testing.T) {
 				}
 			} else if err != nil || record.Version() != migration.Version() {
 				t.Fatalf("Recover() = %#v, %v", record, err)
+			}
+			if record.Duration() != test.wantDuration {
+				t.Fatalf("Recover() duration = %v, want %v", record.Duration(), test.wantDuration)
 			}
 			assertFaultExpectations(t, mock)
 		})
@@ -660,6 +717,9 @@ func TestNoTransactionRollbackPersistenceOutcomes(t *testing.T) {
 				if err != nil || record.Version() != migration.Version() {
 					t.Fatalf("Rollback() = %#v, %v", record, err)
 				}
+				if record.Duration() != time.Millisecond {
+					t.Fatalf("Rollback() duration = %v, want 1ms", record.Duration())
+				}
 			} else if err == nil {
 				t.Fatal("Rollback() error = nil")
 			}
@@ -700,7 +760,10 @@ func TestDecodeRecordRejectsMalformedPersistedValues(t *testing.T) {
 		finishedAt time.Time
 		durationMS int64
 	}{
+		{name: "zero version", recordName: "valid", finishedAt: now},
+		{name: "negative version", version: -1, recordName: "valid", finishedAt: now},
 		{name: "negative duration", version: 1, recordName: "valid", finishedAt: now, durationMS: -1},
+		{name: "oversized duration", version: 1, recordName: "valid", finishedAt: now, durationMS: math.MaxInt64/int64(time.Millisecond) + 1},
 		{name: "invalid name", version: 1, recordName: "Not Valid", finishedAt: now},
 		{name: "zero time", version: 1, recordName: "valid"},
 	} {
@@ -709,6 +772,35 @@ func TestDecodeRecordRejectsMalformedPersistedValues(t *testing.T) {
 				t.Fatalf("decodeRecord() error = %v", err)
 			}
 		})
+	}
+
+	maximumDurationMS := int64(math.MaxInt64 / int64(time.Millisecond))
+	for name, durationMS := range map[string]int64{
+		"zero duration":    0,
+		"maximum duration": maximumDurationMS,
+	} {
+		t.Run(name, func(t *testing.T) {
+			record, err := decodeRecord("migration", 1, "valid", checksum, now, durationMS, false)
+			if err != nil {
+				t.Fatalf("decodeRecord() error = %v", err)
+			}
+			if record.Duration() != time.Duration(durationMS)*time.Millisecond {
+				t.Fatalf("decodeRecord() duration = %v, want %v", record.Duration(), time.Duration(durationMS)*time.Millisecond)
+			}
+		})
+	}
+}
+
+func TestReleaseRejectsEachInvalidSessionState(t *testing.T) {
+	t.Parallel()
+
+	if err := (&session{}).Release(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("Release(nil connection) error = %v, want ErrSessionReleased", err)
+	}
+	released, _ := faultSession(t, 0)
+	released.released = true
+	if err := released.Release(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("Release(released) error = %v, want ErrSessionReleased", err)
 	}
 }
 

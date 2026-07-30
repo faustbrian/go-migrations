@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	advisoryLockKey            int64 = 0x676f6d6967726174
-	defaultLockRetryInterval         = 100 * time.Millisecond
-	statementTimeoutResetLimit       = 30 * time.Second
+	advisoryLockKey int64 = 0x676f6d6967726174
+	// Literal nanoseconds keep these safety budgets indivisible while retaining
+	// their exact documented durations.
+	defaultLockRetryInterval   time.Duration = 100_000_000
+	statementTimeoutResetLimit time.Duration = 30_000_000_000
 )
 
 var (
@@ -137,7 +139,7 @@ func (session *session) Prepare(ctx context.Context) error {
 // Acquire waits for the stable package advisory lock on one physical
 // connection and returns all subsequent operations bound to that connection.
 func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error) {
-	if backend == nil || backend.database == nil || backend.lockRetryInterval <= 0 {
+	if backend == nil || backend.database == nil {
 		return nil, ErrInvalidConfig
 	}
 
@@ -320,10 +322,7 @@ func (session *session) Recover(
 		if err != nil {
 			return migrations.Record{}, fmt.Errorf("mark dirty migration applied: %w", err)
 		}
-		duration := finishedAt.Sub(startedAt).Truncate(time.Millisecond)
-		if duration < 0 {
-			duration = 0
-		}
+		duration := max(finishedAt.Sub(startedAt).Truncate(time.Millisecond), 0)
 
 		return migrations.NewRecord(
 			migrations.RecordKindMigration,
@@ -689,7 +688,13 @@ func decodeRecord(
 	default:
 		return migrations.Record{}, migrations.ErrInvalidRecord
 	}
-	if version <= 0 || durationMS < 0 || durationMS > math.MaxInt64/int64(time.Millisecond) {
+	if version < 1 {
+		return migrations.Record{}, migrations.ErrInvalidRecord
+	}
+	if durationMS < 0 {
+		return migrations.Record{}, migrations.ErrInvalidRecord
+	}
+	if durationMS > math.MaxInt64/int64(time.Millisecond) {
 		return migrations.Record{}, migrations.ErrInvalidRecord
 	}
 	checksum, err := migrations.ParseChecksum(encoded)
