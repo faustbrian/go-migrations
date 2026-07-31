@@ -49,6 +49,9 @@ and will use semantic versioning after the first stable release.
 
 ### Fixed
 
+- Run the engine-neutral boundary check from the release API gate and restrict
+  its scan to public Go documentation snapshots so the binary API compatibility
+  baseline cannot produce a false Goose leak.
 - Bind owned-ledger preparation to the advisory-lock session so first-run
   migration works with a database pool limited to one connection.
 - Length-prefix canonical up and down SQL before hashing so distinct section

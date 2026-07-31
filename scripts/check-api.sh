@@ -28,3 +28,5 @@ generate github.com/faustbrian/golib/pkg/migrations/conformance "$root/api/confo
 generate github.com/faustbrian/golib/pkg/migrations/migrationsservice \
     "$root/api/migrationsservice.txt"
 generate github.com/faustbrian/golib/pkg/migrations/postgres "$root/api/postgres.txt"
+
+"$root/scripts/check-engine-boundary.sh"
