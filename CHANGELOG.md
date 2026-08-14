@@ -5,6 +5,10 @@ and will use semantic versioning after the first stable release.
 
 ## Unreleased
 
+### Documentation
+
+- Link the package README to the repository-wide Golib documentation portal.
+
 ### Changed
 
 - Remove unused CLI-related indirect dependencies from canonical module
