@@ -89,7 +89,7 @@
       "family_label": "Persistence And Durability",
       "family_description": "Durable state, delivery, coordination, recovery, and operational lifecycle.",
       "family_order": 4,
-      "version": "v1.0.0",
+      "version": "1.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [
         "github.com/faustbrian/go-cli",
@@ -102,7 +102,7 @@
         "github.com/faustbrian/go-idempotency",
         "github.com/faustbrian/go-idempotency/compatibility/ecosystem",
         "github.com/faustbrian/go-lease",
-        "github.com/faustbrian/go-postgresql/examples/migrations",
+        "github.com/faustbrian/go-postgres/examples/migrations",
         "github.com/faustbrian/go-queue-control-plane",
         "github.com/faustbrian/go-rate-limit",
         "github.com/faustbrian/go-service/integration/adoption",
