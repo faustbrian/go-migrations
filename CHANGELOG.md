@@ -7,6 +7,9 @@ and Semantic Versioning.
 
 ### Changed
 
+- Track the pinned documentation-tool lockfile so clean CI checkouts install
+  the exact validated cspell dependency.
+
 - Reconcile standalone dependency checksums against deterministic current
   module archives so CI, local verification, and release consumers resolve
   identical content.
