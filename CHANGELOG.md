@@ -5,6 +5,8 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-25
+
 ### Changed
 
 - Upgrade `moby/go-archive` and `golang.org/x/crypto` to their current
@@ -30,8 +32,6 @@ and Semantic Versioning.
 
 - Correct stale package, standalone, and authoritative-source links in public
   documentation.
-
-## 1.0.0 - 2026-08-25
 
 ### Documentation
 
