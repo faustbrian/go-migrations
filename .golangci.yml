@@ -1,0 +1,27 @@
+version: "2"
+
+run:
+  timeout: 10m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - exhaustive
+    - gocritic
+    - gosec
+    - nilerr
+    - noctx
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - testifylint
+    - unconvert
+    - unparam
+    - wastedassign
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

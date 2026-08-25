@@ -7,9 +7,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/faustbrian/golib/pkg/migrations"
-	"github.com/faustbrian/golib/pkg/migrations/migrationsservice"
-	"github.com/faustbrian/golib/pkg/service"
+	"github.com/faustbrian/go-migrations"
+	"github.com/faustbrian/go-migrations/migrationsservice"
+	"github.com/faustbrian/go-service"
 )
 
 func TestCommandRunsCallerSelectedMigrationAsOneShotWork(t *testing.T) {

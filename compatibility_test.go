@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/golib/pkg/migrations"
+	migrations "github.com/faustbrian/go-migrations"
 )
 
 type compatibilityManifest struct {

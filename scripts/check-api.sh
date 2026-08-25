@@ -23,10 +23,10 @@ generate() {
     trap - EXIT HUP INT TERM
 }
 
-generate github.com/faustbrian/golib/pkg/migrations "$root/api/migrations.txt"
-generate github.com/faustbrian/golib/pkg/migrations/conformance "$root/api/conformance.txt"
-generate github.com/faustbrian/golib/pkg/migrations/migrationsservice \
+generate github.com/faustbrian/go-migrations "$root/api/migrations.txt"
+generate github.com/faustbrian/go-migrations/conformance "$root/api/conformance.txt"
+generate github.com/faustbrian/go-migrations/migrationsservice \
     "$root/api/migrationsservice.txt"
-generate github.com/faustbrian/golib/pkg/migrations/postgres "$root/api/postgres.txt"
+generate github.com/faustbrian/go-migrations/postgres "$root/api/postgres.txt"
 
 "$root/scripts/check-engine-boundary.sh"

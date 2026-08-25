@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	migrations "github.com/faustbrian/golib/pkg/migrations"
+	migrations "github.com/faustbrian/go-migrations"
 	pressly "github.com/pressly/goose/v3"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	migrations "github.com/faustbrian/golib/pkg/migrations"
+	migrations "github.com/faustbrian/go-migrations"
 )
 
 func TestBuildStatusReportsBaselineAppliedDirtyAndPendingState(t *testing.T) {

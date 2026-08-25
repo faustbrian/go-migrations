@@ -1,4 +1,4 @@
-package conformance // import "github.com/faustbrian/golib/pkg/migrations/conformance"
+package conformance // import "github.com/faustbrian/go-migrations/conformance"
 
 Package conformance provides the reusable behavioral test suite every migration
 backend must pass without depending on its execution engine.

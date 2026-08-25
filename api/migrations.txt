@@ -1,4 +1,4 @@
-package migrations // import "github.com/faustbrian/golib/pkg/migrations"
+package migrations // import "github.com/faustbrian/go-migrations"
 
 Package migrations provides engine-neutral database migration contracts.
 

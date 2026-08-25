@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-migrations",
+  "go_version": "1.26.6",
+  "modules": [
+    {
+      "directory": ".",
+      "module_path": "github.com/faustbrian/go-migrations",
+      "go_version": "1.26.6",
+      "packages": [
+        {
+          "module_directory": ".",
+          "directory": ".",
+          "name": "migrations",
+          "import_path": "github.com/faustbrian/go-migrations",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
+          "directory": "conformance",
+          "name": "conformance",
+          "import_path": "github.com/faustbrian/go-migrations/conformance",
+          "kind": "test support",
+          "production": false,
+          "executable": true,
+          "coverage_required": false,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
+          "directory": "examples/job",
+          "name": "main",
+          "import_path": "github.com/faustbrian/go-migrations/examples/job",
+          "kind": "example",
+          "production": false,
+          "executable": true,
+          "coverage_required": false,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
+          "directory": "internal/goose",
+          "name": "goose",
+          "import_path": "github.com/faustbrian/go-migrations/internal/goose",
+          "kind": "internal",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
+          "directory": "migrationsservice",
+          "name": "migrationsservice",
+          "import_path": "github.com/faustbrian/go-migrations/migrationsservice",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
+          "directory": "postgres",
+          "name": "postgres",
+          "import_path": "github.com/faustbrian/go-migrations/postgres",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "`migrations` is an engine-neutral database migration runtime with a PostgreSQL backend. It owns migration identity, planning, status, locking, checksums, baselines, recovery, and the `public.go_schema_migrations` ledger. Goose is an internal, pinned SQL execution detail and never appears in the public API.",
+      "lifecycle": "stable",
+      "kind": "public library",
+      "releasable": true,
+      "family": "persistence-and-durability",
+      "family_label": "Persistence And Durability",
+      "family_description": "Durable state, delivery, coordination, recovery, and operational lifecycle.",
+      "family_order": 4,
+      "version": "v1.0.0",
+      "tag_prefix": "v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-cli",
+        "github.com/faustbrian/go-correlation",
+        "github.com/faustbrian/go-identifier",
+        "github.com/faustbrian/go-service"
+      ],
+      "reverse_owned_dependencies": [
+        "github.com/faustbrian/go-authorization",
+        "github.com/faustbrian/go-idempotency",
+        "github.com/faustbrian/go-idempotency/compatibility/ecosystem",
+        "github.com/faustbrian/go-lease",
+        "github.com/faustbrian/go-postgresql/examples/migrations",
+        "github.com/faustbrian/go-queue-control-plane",
+        "github.com/faustbrian/go-rate-limit",
+        "github.com/faustbrian/go-service/integration/adoption",
+        "github.com/faustbrian/go-service/integration/reference-durability"
+      ],
+      "external_runtime_dependencies": [
+        "github.com/DATA-DOG/go-sqlmock",
+        "github.com/jackc/pgx/v5",
+        "github.com/pressly/goose/v3",
+        "github.com/testcontainers/testcontainers-go",
+        "github.com/testcontainers/testcontainers-go/modules/postgres"
+      ],
+      "required_services": [
+        "postgresql"
+      ],
+      "build_tags": [],
+      "test_tags": [
+        "integration"
+      ],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        ".ai/GOAL.md",
+        ".ai/GOAL_HARDEN.md"
+      ],
+      "goal_status": "implementation-evidence-inventoried",
+      "goal_evidence": [
+        {
+          "file": ".ai/GOAL.md",
+          "requirements_sha256": "b3bb68c9cef4a4db7f0037cfd1fe46b13822107e09b63ca06139c56a6e154f62",
+          "implementation_evidence": [
+            "CHANGELOG.md",
+            "README.md",
+            "docs/architecture.md",
+            "docs/compatibility.md",
+            "docs/hardening.md",
+            "docs/security.md"
+          ],
+          "verification_gates": [
+            "format-check",
+            "tidy-check",
+            "safety",
+            "vet",
+            "test",
+            "race",
+            "coverage",
+            "lint",
+            "staticcheck",
+            "vulnerability",
+            "secrets",
+            "licenses",
+            "sbom",
+            "fuzz",
+            "mutation",
+            "nilaway",
+            "docs",
+            "api",
+            "conformance",
+            "interoperability",
+            "benchmark"
+          ],
+          "implementation_status": "implemented-requires-fresh-verification"
+        },
+        {
+          "file": ".ai/GOAL_HARDEN.md",
+          "requirements_sha256": "f6a0bec4e883927523ae2c6efa4bbe7f73c532022a244dbe24418d212afaa6ba",
+          "implementation_evidence": [
+            "CHANGELOG.md",
+            "README.md",
+            "docs/architecture.md",
+            "docs/compatibility.md",
+            "docs/hardening.md",
+            "docs/security.md"
+          ],
+          "verification_gates": [
+            "format-check",
+            "tidy-check",
+            "safety",
+            "vet",
+            "test",
+            "race",
+            "coverage",
+            "lint",
+            "staticcheck",
+            "vulnerability",
+            "secrets",
+            "licenses",
+            "sbom",
+            "fuzz",
+            "mutation",
+            "nilaway",
+            "docs",
+            "api",
+            "conformance",
+            "interoperability",
+            "benchmark"
+          ],
+          "implementation_status": "implemented-requires-fresh-verification"
+        }
+      ],
+      "gates": {
+        "api_compatibility": true,
+        "benchmarks": true,
+        "conformance": false,
+        "coverage": true,
+        "documentation": true,
+        "fuzz": true,
+        "lint": true,
+        "mutation": true,
+        "race": true,
+        "security": true,
+        "tests": true
+      }
+    }
+  ]
+}

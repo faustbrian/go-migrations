@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/golib/pkg/migrations"
-	gooseadapter "github.com/faustbrian/golib/pkg/migrations/internal/goose"
+	migrations "github.com/faustbrian/go-migrations"
+	gooseadapter "github.com/faustbrian/go-migrations/internal/goose"
 )
 
 func TestAdapterExecutesTransactionalMigrationOnCallerTransaction(t *testing.T) {

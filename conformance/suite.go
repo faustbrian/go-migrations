@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/golib/pkg/migrations"
+	migrations "github.com/faustbrian/go-migrations"
 )
 
 // Harness supplies engine-specific SQL and isolated runner construction.

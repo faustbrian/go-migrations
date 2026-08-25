@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	migrations "github.com/faustbrian/golib/pkg/migrations"
-	gooseadapter "github.com/faustbrian/golib/pkg/migrations/internal/goose"
+	migrations "github.com/faustbrian/go-migrations"
+	gooseadapter "github.com/faustbrian/go-migrations/internal/goose"
 )
 
 const (

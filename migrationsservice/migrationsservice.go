@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/faustbrian/golib/pkg/migrations"
-	"github.com/faustbrian/golib/pkg/service"
+	"github.com/faustbrian/go-migrations"
+	"github.com/faustbrian/go-service"
 )
 
 var (

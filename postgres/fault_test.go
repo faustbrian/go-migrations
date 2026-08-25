@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/golib/pkg/migrations"
+	migrations "github.com/faustbrian/go-migrations"
 )
 
 func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {

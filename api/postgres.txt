@@ -1,4 +1,4 @@
-package postgres // import "github.com/faustbrian/golib/pkg/migrations/postgres"
+package postgres // import "github.com/faustbrian/go-migrations/postgres"
 
 Package postgres implements the owned PostgreSQL ledger and lock backend.
 

@@ -1,9 +1,11 @@
 # Changelog
 
 All notable changes are documented here. The project follows Keep a Changelog
-and will use semantic versioning after the first stable release.
+and Semantic Versioning.
 
 ## Unreleased
+
+## 1.0.0 - 2026-08-25
 
 ### Documentation
 
@@ -11,6 +13,7 @@ and will use semantic versioning after the first stable release.
 
 ### Changed
 
+- Publish the module from its standalone `github.com/faustbrian/go-migrations` identity while preserving its documented API and behavior.
 - Replace obsolete owned-module pseudo-version pins with the monorepo's local
   `v0.0.0` source-proxy coordinates; release tooling continues to emit exact
   `v1.0.0` dependency versions.

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/golib/pkg/migrations"
-	"github.com/faustbrian/golib/pkg/migrations/postgres"
+	migrations "github.com/faustbrian/go-migrations"
+	"github.com/faustbrian/go-migrations/postgres"
 )
 
 func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {

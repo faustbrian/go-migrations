@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-migrations",
+  "packages": [
+    {
+      "module_directory": ".",
+      "directory": ".",
+      "name": "migrations",
+      "import_path": "github.com/faustbrian/go-migrations",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
+      "directory": "conformance",
+      "name": "conformance",
+      "import_path": "github.com/faustbrian/go-migrations/conformance",
+      "kind": "test support",
+      "production": false,
+      "executable": true,
+      "coverage_required": false,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
+      "directory": "examples/job",
+      "name": "main",
+      "import_path": "github.com/faustbrian/go-migrations/examples/job",
+      "kind": "example",
+      "production": false,
+      "executable": true,
+      "coverage_required": false,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
+      "directory": "internal/goose",
+      "name": "goose",
+      "import_path": "github.com/faustbrian/go-migrations/internal/goose",
+      "kind": "internal",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
+      "directory": "migrationsservice",
+      "name": "migrationsservice",
+      "import_path": "github.com/faustbrian/go-migrations/migrationsservice",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
+      "directory": "postgres",
+      "name": "postgres",
+      "import_path": "github.com/faustbrian/go-migrations/postgres",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-package migrationsservice // import "github.com/faustbrian/golib/pkg/migrations/migrationsservice"
+package migrationsservice // import "github.com/faustbrian/go-migrations/migrationsservice"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
 service migrate command.
