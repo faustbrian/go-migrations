@@ -37,13 +37,13 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/ISU=
 github.com/ebitengine/purego v0.10.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/faustbrian/go-cli v1.0.0 h1:Pw6zq7BRNVBZvTrBYbM4U9ApWVqchgms8PPHddN1v3c=
+github.com/faustbrian/go-cli v1.0.0 h1:WddhIQwyvfRh60Zj4guWf+QSla5ccVIz3KHryQqn4JY=
 github.com/faustbrian/go-cli v1.0.0/go.mod h1:pvGIf3RUGkGjlA7oJwPdTuWkH/lLWgQjroJZEhkrZMM=
-github.com/faustbrian/go-correlation v1.0.0 h1:KHvCnmDKO9XdSkntuahfzk9Og+gbzkJfDSVLzv9afFo=
+github.com/faustbrian/go-correlation v1.0.0 h1:Jc8cybJX4y2DKuBXMl64U/cOesIobu/234JHROWrvIs=
 github.com/faustbrian/go-correlation v1.0.0/go.mod h1:upLcV0fqKC8IUUx11R6c69CVwC3DO1EeXsw2BQU2PKE=
-github.com/faustbrian/go-identifier v1.0.0 h1:xzm3gxt7YuSKsYHikG0lPNXRgHemJcTZ0dxjQ17jcz4=
+github.com/faustbrian/go-identifier v1.0.0 h1:FRz0bX2WqU4L5HBM3esi+yJmXt7KW7o+Ua7YW8ZaZJ0=
 github.com/faustbrian/go-identifier v1.0.0/go.mod h1:Q2yS7Hk4N4i9Wd3OmPQGh657SHtA1IjvtT4PllphNlY=
-github.com/faustbrian/go-service v1.0.0 h1:X5VEl0QF90hlRjXG0yzYobsBdKEvFkaHMH4Q+8qg/ZU=
+github.com/faustbrian/go-service v1.0.0 h1:C/hmnMgciq35rHM52p7Q4tlq404b/7F/daVtvBHtoEw=
 github.com/faustbrian/go-service v1.0.0/go.mod h1:2klNLQJfgrbRX2N41iLSEPVFwLmyg4nMVQ+kWZZudAc=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=

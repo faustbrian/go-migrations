@@ -89,7 +89,7 @@ Read the [migration format](docs/migration-format.md),
 ## Documentation
 
 - [Architecture and engine contract](docs/architecture.md)
-- [postgres integration](docs/postgres.md)
+- [PostgreSQL integration](docs/go-postgres.md)
 - [Migration format and ledger](docs/migration-format.md)
 - [Operations and disaster recovery](docs/operations.md)
 - [Laravel-to-Go baseline runbook](docs/laravel-baseline.md)
