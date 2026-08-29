@@ -88,25 +88,11 @@ Read the [migration format](docs/migration-format.md),
 
 ## Documentation
 
-- [Architecture and engine contract](docs/architecture.md)
-- [PostgreSQL integration](docs/go-postgres.md)
-- [Migration format and ledger](docs/migration-format.md)
-- [Operations and disaster recovery](docs/operations.md)
-- [Laravel-to-Go baseline runbook](docs/laravel-baseline.md)
-- [Security](docs/security.md)
-- [Compatibility](docs/compatibility.md)
-- [Hardening evidence](docs/hardening.md)
-- [Benchmark baselines](docs/benchmarks.md)
-- [Replacing the execution engine](docs/engine-replacement.md)
-- [FAQ](docs/faq.md)
-- [Contributing](CONTRIBUTING.md)
+Start with the [documentation index](docs/README.md). It organizes migration
+formats, PostgreSQL integration, production operations, Laravel adoption, and
+maintainer references.
 
 ## License
 
 `migrations` is open-source software licensed under the
 [MIT License](LICENSE).
-
-## Ecosystem
-
-Use the [Golib documentation portal](https://github.com/faustbrian/golib/blob/main/docs/index.md)
-to choose companion packages, supported stacks, recipes, and operations guidance.

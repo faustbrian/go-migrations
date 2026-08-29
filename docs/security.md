@@ -38,8 +38,8 @@ role, PostgreSQL server compromise, and availability attacks outside configured
 timeouts are out of scope. Those risks require platform access controls,
 auditing, backups, and incident response rather than migration parsing.
 
-The executable evidence and reviewed release blockers are maintained in the
-[hardening evidence](hardening.md).
+Operational controls and compatibility constraints are documented in the
+[operations guide](operations.md) and [compatibility policy](compatibility.md).
 
 Report vulnerabilities privately to the maintainers. Do not open a public issue
 with credentials, exploit details, or production schema data.

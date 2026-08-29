@@ -4,11 +4,7 @@ set -eu
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$root"
 
-if grep -Ein 'goose' \
-    api/migrations.txt \
-    api/conformance.txt \
-    api/migrationsservice.txt \
-    api/postgres.txt; then
+if grep -Ein 'goose' api/v1.txt; then
     echo "Goose identity escaped into a public API snapshot" >&2
     exit 1
 fi
