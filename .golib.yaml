@@ -1,0 +1,63 @@
+schema_version: 1
+tool_version: v1.0.6
+tool_checksums_sha256: d43e6a07573371e95d5fcf47c94e78f9983e903ef4eaab8e39f9bfc5dc224525
+manifest:
+  modules: modules.json
+  packages: packages.json
+evidence:
+  root: .verification
+mutation:
+  root: .verification/mutation
+  imports:
+    - module: .
+      archive: .verification/mutation/bootstrap/root.zip
+      ledger: .verification/mutation/migration-ledger.json
+api:
+  baselines:
+    - module: .
+      mode: go-doc
+      path: api/v1.txt
+      packages:
+        - .
+        - ./conformance
+        - ./migrationsservice
+        - ./postgres
+operations:
+  - module: .
+    gate: test
+    steps:
+      - type: make
+        makefile: verification/package.mk
+        target: engine-boundary
+        timeout: 20m
+  - module: .
+    gate: fuzz
+    steps:
+      - type: go-test
+        packages: [.]
+        fuzz: '^FuzzFSSource$'
+        budget: 10000x
+        timeout: 20m
+      - type: go-test
+        packages: [.]
+        fuzz: '^FuzzMigrationIdentity$'
+        budget: 10000x
+        timeout: 20m
+      - type: go-test
+        packages: [.]
+        fuzz: '^FuzzChecksum$'
+        budget: 10000x
+        timeout: 20m
+      - type: go-test
+        packages: [./postgres]
+        fuzz: '^FuzzDecodeLedgerRecord$'
+        budget: 10000x
+        timeout: 20m
+  - module: .
+    gate: benchmark
+    steps:
+      - type: go-test
+        packages: [./...]
+        benchmark: .
+        budget: 100ms
+        timeout: 20m

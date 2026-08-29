@@ -5,6 +5,12 @@ and Semantic Versioning.
 
 ## Unreleased
 
+### Changed
+
+- Replace the repository-local verification implementation with the immutable
+  `go-library-tools` contract while retaining package-owned mutation evidence,
+  API documentation baselines, PostgreSQL coverage, and engine boundaries.
+
 ### Documentation
 
 - Replace archived monorepo links and completed execution artifacts with a
