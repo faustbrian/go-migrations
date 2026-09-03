@@ -92,6 +92,10 @@ Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
 maintainer references.
 
+For ecosystem-wide selection and ownership guidance, see the versioned
+[Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
+and its [Persistence and durability family](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection).
+
 ## License
 
 `migrations` is open-source software licensed under the
