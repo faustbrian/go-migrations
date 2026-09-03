@@ -7,11 +7,19 @@ and Semantic Versioning.
 
 ### Changed
 
+- Adopt the `go-library-tools` v1.3.0 schema-v2 cohesion contract and local
+  `make cohesion` gate without changing migration APIs or runtime behavior.
+- Pin reusable CI to the v1.3.0 workflow and enforce cohesion metadata in the
+  repository's required CI contract.
+
 - Replace the repository-local verification implementation with the immutable
   `go-library-tools` contract while retaining package-owned mutation evidence,
   API documentation baselines, PostgreSQL coverage, and engine boundaries.
 
 ### Documentation
+
+- Publish the module's family, package selection, ownership, lifecycle, and
+  support boundaries, and link to the immutable v1.3.0 ecosystem guidance.
 
 - Replace archived monorepo links and completed execution artifacts with a
   standalone, human-oriented documentation structure.

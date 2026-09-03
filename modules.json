@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repository": "github.com/faustbrian/go-migrations",
   "go_version": "1.26.6",
   "modules": [
@@ -129,6 +129,93 @@
       "goal_files": [],
       "goal_status": "not-applicable",
       "goal_evidence": [],
+      "cohesion": {
+        "family": "persistence-and-durability",
+        "secondary_capabilities": [
+          "database-and-storage",
+          "distributed-coordination",
+          "scheduling-and-orchestration",
+          "testing-and-conformance"
+        ],
+        "responsibility": "Provide engine-neutral migration identity, validation, deterministic planning, execution coordination, recovery, and a PostgreSQL ledger and backend.",
+        "non_goals": [
+          "Own application database connections, deployment orchestration, retry policy, or service-process lifecycle.",
+          "Provide an ORM, query builder, schema declaration language, or transparent migration execution at application startup.",
+          "Expose the internal SQL execution engine or read, reuse, or mutate Laravel migration history."
+        ],
+        "public_package_identifier": "migrations",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-migrations"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-migrations": "Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination.",
+          "github.com/faustbrian/go-migrations/conformance": "Use when implementing or replacing a migration engine to verify the complete public runner contract.",
+          "github.com/faustbrian/go-migrations/migrationsservice": "Use to adapt an explicitly constructed runner and operation to the standard one-shot service migrate command.",
+          "github.com/faustbrian/go-migrations/postgres": "Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting."
+        },
+        "lifecycle_status": "active",
+        "maturity": "stable",
+        "construction_styles": [
+          "functional-options",
+          "new-options",
+          "plain-function",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "borrow",
+            "copy"
+          ],
+          "runtime_resources": "shared",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [
+          "github.com/faustbrian/go-migrations/migrationsservice",
+          "github.com/faustbrian/go-migrations/postgres"
+        ],
+        "companions": [
+          "github.com/faustbrian/go-idempotency",
+          "github.com/faustbrian/go-postgres",
+          "github.com/faustbrian/go-transactional-outbox"
+        ],
+        "supported_go": {
+          "minimum": "1.26.6",
+          "tested": [
+            "1.26.6"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [
+          "postgresql"
+        ],
+        "supported_protocols": [],
+        "documentation": {
+          "readme": "README.md",
+          "api": "https://pkg.go.dev/github.com/faustbrian/go-migrations",
+          "adoption": "README.md",
+          "security": "docs/security.md",
+          "compatibility": "docs/compatibility.md",
+          "performance": "docs/benchmarks.md",
+          "examples": "examples/job/main.go",
+          "faq": "docs/faq.md",
+          "changelog": "CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-migrations",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.3.0/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "not-started",
+          "hardening": "not-started",
+          "release": "not-started"
+        }
+      },
       "gates": {
         "api_compatibility": true,
         "benchmarks": true,
