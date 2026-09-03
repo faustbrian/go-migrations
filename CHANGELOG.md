@@ -16,6 +16,11 @@ and Semantic Versioning.
   `go-library-tools` contract while retaining package-owned mutation evidence,
   API documentation baselines, PostgreSQL coverage, and engine boundaries.
 
+- Resolve `github.com/faustbrian/go-cli`, `github.com/faustbrian/go-correlation`,
+  `github.com/faustbrian/go-identifier`, and `github.com/faustbrian/go-service`
+  v1.0.0 against their published module identities so dependency verification
+  matches public consumers.
+
 ### Documentation
 
 - Publish the module's family, package selection, ownership, lifecycle, and
