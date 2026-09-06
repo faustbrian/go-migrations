@@ -23,6 +23,9 @@ and Semantic Versioning.
 
 ### Documentation
 
+- Correct the root security policy to identify the latest published `v1`
+  release as supported instead of retaining pre-stable guidance.
+
 - Publish the module's family, package selection, ownership, lifecycle, and
   support boundaries, and link to the immutable v1.4.0 ecosystem guidance.
 
