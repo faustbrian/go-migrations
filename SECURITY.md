@@ -2,9 +2,8 @@
 
 ## Supported versions
 
-Before the first stable release, only the latest published minor version will
-receive security fixes. After `v1.0.0`, supported release lines will be listed
-here and in the compatibility documentation.
+The latest published `v1` release receives security fixes. Supported release
+lines are listed here and in the compatibility documentation.
 
 ## Reporting a vulnerability
 
