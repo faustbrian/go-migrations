@@ -23,6 +23,11 @@ and Semantic Versioning.
 
 ### Documentation
 
+- Complete the stable-v1 entry point with the executable deployment example,
+  current package and companion map, lifecycle and ownership contract,
+  root-tag and compatibility policy, and support, security, troubleshooting,
+  and API navigation.
+
 - Correct the root security policy to identify the latest published `v1`
   release as supported instead of retaining pre-stable guidance.
 
@@ -32,7 +37,7 @@ and Semantic Versioning.
 - Replace archived monorepo links and completed execution artifacts with a
   standalone, human-oriented documentation structure.
 
-## 1.0.0 - 2026-08-25
+## 1.0.0 - 2026-08-26
 
 ### Changed
 
