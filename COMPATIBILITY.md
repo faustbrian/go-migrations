@@ -1,12 +1,14 @@
 # Compatibility Policy
 
-Each releasable directory is an independent Go module and follows semantic
-versioning. Tags use `<module-directory>/v<version>`.
+This repository has one releasable root Go module and follows semantic
+versioning. Root releases use `v<version>` tags, such as `v1.0.0`; package
+directories are not independently versioned modules and do not use
+directory-prefixed tags.
 
-Before `v1`, minor releases MAY contain reviewed breaking changes, but every
-break MUST be documented with migration guidance. Patch releases MUST remain
-backward compatible. At and after `v1`, incompatible exported API or documented
-behavior changes require a new major version.
+The stable v1 contract is published. Patch releases MUST remain backward
+compatible, and incompatible exported API or documented behavior changes
+require a new major version. The latest patch in the current stable major is
+the supported release for defect and security fixes.
 
 Compatibility includes exported Go APIs, error classification, serialization,
 protocol behavior, persistence schemas, environment variables, command output,
