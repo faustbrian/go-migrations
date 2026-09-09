@@ -3,7 +3,8 @@
 `migrations` is a stable v1 module for deterministic, engine-neutral database
 migrations. The root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
-`migrationsservice` adapts an explicit runner to a one-shot service command,
+`adapters/service` adapts an explicit runner to a one-shot service command;
+`migrationsservice` preserves the released API as a compatibility facade,
 and `conformance` is the backend testing helper. The caller owns the source,
 observer, and database; operations are context-bounded and the module starts no
 background work.

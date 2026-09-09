@@ -19,6 +19,7 @@ api:
       path: api/v1.txt
       packages:
         - .
+        - ./adapters/service
         - ./conformance
         - ./migrationsservice
         - ./postgres

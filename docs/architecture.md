@@ -35,9 +35,14 @@ PostgreSQL backend. Neither package needs to import the other, avoiding a cycle.
 
 ## Service command boundary
 
-`migrationsservice` depends on `service` and returns its fixed one-shot
+`adapters/service` depends on `service` and returns its fixed one-shot
 `migrate` command. The adapter accepts caller-owned load, preparation, and
 execution callbacks. Preparation returns a concrete `Runner` plus the
 migration-only lifecycle components; execution selects the runner operation.
 The adapter does not import a database backend, add migration behavior, or
 initialize dependencies used by other service roles.
+
+The released `migrationsservice` package is a compatibility facade over this
+canonical implementation. Both paths preserve their own named type identities;
+the facade translates structured construction errors while sharing stable
+sentinels and the same one-shot command behavior.
