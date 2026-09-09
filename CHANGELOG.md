@@ -5,6 +5,8 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 1.1.0 - 2026-09-09
+
 ### Changed
 
 - Add `adapters/service` as the canonical one-shot migration command adapter
