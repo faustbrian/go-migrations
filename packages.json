@@ -16,6 +16,18 @@
     },
     {
       "module_directory": ".",
+      "directory": "adapters/service",
+      "name": "migrationsservice",
+      "import_path": "github.com/faustbrian/go-migrations/adapters/service",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
+    },
+    {
+      "module_directory": ".",
       "directory": "conformance",
       "name": "conformance",
       "import_path": "github.com/faustbrian/go-migrations/conformance",

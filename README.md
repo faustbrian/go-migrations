@@ -51,7 +51,8 @@ dedicated deployment job; do not run it implicitly in every service process.
 | --- | --- |
 | `github.com/faustbrian/go-migrations` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
 | `github.com/faustbrian/go-migrations/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/migrationsservice` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
+| `github.com/faustbrian/go-migrations/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
+| `github.com/faustbrian/go-migrations/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
 | `github.com/faustbrian/go-migrations/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
@@ -75,6 +76,12 @@ cleanup to 30 seconds. The PostgreSQL backend polls a held advisory lock every
 caller selects `WithLockTimeout` or `WithStatementTimeout`. Invalid options and
 nil collaborators fail construction.
 
+Runner and PostgreSQL backend functional options are applied from left to
+right. Construction stops at the first nil or failing option, so later options
+do not run; repeated valid settings use the last applied value. Neither
+constructor acquires a migration lock, runs SQL, or takes ownership of the
+caller-provided database while applying options.
+
 Every plan, status, apply, rollback, baseline, and recovery operation accepts
 the caller's `context.Context`. It acquires one connection-bound session,
 validates the complete source and ledger, and releases the session before
@@ -91,7 +98,7 @@ indefinitely, and never receives migration SQL; observer panics are contained.
 
 ## Service migrate command
 
-`migrationsservice.New` adapts a caller-constructed `Runner` to the standard
+`adapters/service.New` adapts a caller-constructed `Runner` to the standard
 one-shot `service` migrate role. The caller loads typed configuration, prepares
 only migration dependencies, and explicitly selects the runner operation. The
 adapter adds no migration policy, HTTP listener, management server, readiness
@@ -102,10 +109,15 @@ it finishes or fails. A missing runner fails during plan construction. Use a
 dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or
 recovery behavior explicitly according to the reviewed operation.
 
+The released `migrationsservice` path remains a deprecated compatibility
+facade. It preserves its generic signatures, named type identities, error
+sentinels and traversal, command semantics, and caller-owned runner and resource
+lifecycle while delegating to `adapters/service`.
+
 ## Integrations and companion packages
 
 - [`go-service`](https://github.com/faustbrian/go-service) supplies the
-  one-shot command contract used by `migrationsservice`.
+  one-shot command contract used by `adapters/service`.
 - [`go-postgres`](https://github.com/faustbrian/go-postgres) can supply the
   caller-owned `*sql.DB`; the [integration guide](docs/go-postgres.md) keeps
   the two libraries as sibling dependencies.

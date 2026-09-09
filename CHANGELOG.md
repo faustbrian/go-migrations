@@ -7,6 +7,13 @@ and Semantic Versioning.
 
 ### Changed
 
+- Add `adapters/service` as the canonical one-shot migration command adapter
+  and retain `migrationsservice` as a compatibility facade with unchanged
+  generic signatures, named identities, errors, lifecycle, and ownership.
+- Document and characterize left-to-right Runner and PostgreSQL backend option
+  application, first-error termination, nil rejection, last-option precedence,
+  and I/O-free caller-owned construction.
+
 - Adopt the `go-library-tools` v1.4.0 schema-v2 cohesion contract and local
   `make cohesion` gate without changing migration APIs or runtime behavior.
 - Pin reusable CI to the immutable v1.4.0 W14-enforcement workflow and enforce

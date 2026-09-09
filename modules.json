@@ -22,6 +22,18 @@
         },
         {
           "module_directory": ".",
+          "directory": "adapters/service",
+          "name": "migrationsservice",
+          "import_path": "github.com/faustbrian/go-migrations/adapters/service",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        },
+        {
+          "module_directory": ".",
           "directory": "conformance",
           "name": "conformance",
           "import_path": "github.com/faustbrian/go-migrations/conformance",
@@ -150,7 +162,8 @@
         "package_selection": {
           "github.com/faustbrian/go-migrations": "Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination.",
           "github.com/faustbrian/go-migrations/conformance": "Use when implementing or replacing a migration engine to verify the complete public runner contract.",
-          "github.com/faustbrian/go-migrations/migrationsservice": "Use to adapt an explicitly constructed runner and operation to the standard one-shot service migrate command.",
+          "github.com/faustbrian/go-migrations/adapters/service": "Use to adapt an explicitly constructed runner and operation to the standard one-shot service migrate command.",
+          "github.com/faustbrian/go-migrations/migrationsservice": "Use only as the compatibility facade for the canonical adapters/service package.",
           "github.com/faustbrian/go-migrations/postgres": "Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting."
         },
         "lifecycle_status": "active",
@@ -175,6 +188,7 @@
         },
         "optional_owned_dependencies": [],
         "adapters": [
+          "github.com/faustbrian/go-migrations/adapters/service",
           "github.com/faustbrian/go-migrations/migrationsservice",
           "github.com/faustbrian/go-migrations/postgres"
         ],

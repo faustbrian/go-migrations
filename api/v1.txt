@@ -492,37 +492,7 @@ type Version uint64
 func (version Version) String() string
     String returns the canonical unpadded decimal representation.
 
-package conformance // import "github.com/faustbrian/go-migrations/conformance"
-
-Package conformance provides the reusable behavioral test suite every migration
-backend must pass without depending on its execution engine.
-
-FUNCTIONS
-
-func Run(t *testing.T, harness Harness)
-    Run executes the engine-neutral migration behavior contract.
-
-
-TYPES
-
-type Harness struct {
-	NewRunner            func(*testing.T, fstest.MapFS) *migrations.Runner
-	Exec                 func(*testing.T, string)
-	TransactionalUp      string
-	TransactionalDown    string
-	NoTransactionUp      string
-	NoTransactionDown    string
-	TransactionalFailure string
-	NoTransactionFailure string
-	RemovePartialEffects string
-}
-    Harness supplies engine-specific SQL and isolated runner construction.
-    NewRunner must return runners sharing one fresh database when called more
-    than once with the same *testing.T and isolated databases for different
-    subtests. Exec is used only to remove reviewed partial effects before an
-    explicit rolled-back recovery decision.
-
-package migrationsservice // import "github.com/faustbrian/go-migrations/migrationsservice"
+package migrationsservice // import "github.com/faustbrian/go-migrations/adapters/service"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
 service migrate command.
@@ -560,16 +530,13 @@ type Execute func(context.Context, *migrations.Runner) error
 type Execution struct {
 	// Runner is the concrete migration runner used by Execute.
 	Runner *migrations.Runner
-	// Components acquire migration-only dependencies and release them after the
-	// one-shot task finishes.
+	// Components acquire migration-only dependencies and release them after the one-shot task finishes.
 	Components []service.Component
 }
     Execution contains the prepared runner and its explicit resource lifecycle.
 
 type ExecutionError struct {
-	// Field identifies the invalid execution field.
-	Field string
-	// Reason describes the safe failure category.
+	Field  string
 	Reason string
 }
     ExecutionError identifies an invalid prepared execution.
@@ -585,21 +552,15 @@ type Load[C any] func(context.Context, service.Invocation) (C, error)
     construction.
 
 type Options[C any] struct {
-	// Summary is the one-line migrate command help text.
 	Summary string
-	// Load resolves typed migration configuration.
-	Load Load[C]
-	// Prepare constructs the runner and migration-only components.
+	Load    Load[C]
 	Prepare Prepare[C]
-	// Execute selects the runner operation without adapter-owned semantics.
 	Execute Execute
 }
     Options configure the standard migrate command adapter.
 
 type OptionsError struct {
-	// Field identifies the rejected option.
-	Field string
-	// Reason describes the safe failure category.
+	Field  string
 	Reason string
 }
     OptionsError identifies one rejected option.
@@ -610,11 +571,113 @@ func (err *OptionsError) Error() string
 func (err *OptionsError) Unwrap() error
     Unwrap exposes the stable option classification.
 
-type Prepare[C any] func(
-	context.Context,
-	service.BuildContext,
-	C,
-) (Execution, error)
+type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, error)
+    Prepare constructs only the resources needed by the migrate role.
+
+package conformance // import "github.com/faustbrian/go-migrations/conformance"
+
+Package conformance provides the reusable behavioral test suite every migration
+backend must pass without depending on its execution engine.
+
+FUNCTIONS
+
+func Run(t *testing.T, harness Harness)
+    Run executes the engine-neutral migration behavior contract.
+
+
+TYPES
+
+type Harness struct {
+	NewRunner            func(*testing.T, fstest.MapFS) *migrations.Runner
+	Exec                 func(*testing.T, string)
+	TransactionalUp      string
+	TransactionalDown    string
+	NoTransactionUp      string
+	NoTransactionDown    string
+	TransactionalFailure string
+	NoTransactionFailure string
+	RemovePartialEffects string
+}
+    Harness supplies engine-specific SQL and isolated runner construction.
+    NewRunner must return runners sharing one fresh database when called more
+    than once with the same *testing.T and isolated databases for different
+    subtests. Exec is used only to remove reviewed partial effects before an
+    explicit rolled-back recovery decision.
+
+package migrationsservice // import "github.com/faustbrian/go-migrations/migrationsservice"
+
+Package migrationsservice preserves the released service-adapter path.
+
+Deprecated: use github.com/faustbrian/go-migrations/adapters/service.
+
+VARIABLES
+
+var (
+	// ErrInvalidOptions identifies invalid adapter construction.
+	ErrInvalidOptions = canonical.ErrInvalidOptions
+	// ErrInvalidExecution identifies a prepared migration without a runner.
+	ErrInvalidExecution = canonical.ErrInvalidExecution
+)
+
+TYPES
+
+type Adapter[C any] struct {
+	// Has unexported fields.
+}
+    Adapter preserves the legacy adapter type identity.
+
+func New[C any](options Options[C]) (*Adapter[C], error)
+    New delegates to the canonical service adapter.
+
+func (adapter *Adapter[C]) Command() service.Command
+    Command returns the standard one-shot migrate registration.
+
+type Execute func(context.Context, *migrations.Runner) error
+    Execute selects one caller-owned migrations.Runner operation.
+
+type Execution struct {
+	Runner     *migrations.Runner
+	Components []service.Component
+}
+    Execution contains the prepared runner and its explicit resource lifecycle.
+
+type ExecutionError struct {
+	Field  string
+	Reason string
+}
+    ExecutionError identifies an invalid prepared execution.
+
+func (err *ExecutionError) Error() string
+    Error returns a secret-safe execution diagnostic.
+
+func (err *ExecutionError) Unwrap() error
+    Unwrap exposes the stable execution classification.
+
+type Load[C any] func(context.Context, service.Invocation) (C, error)
+    Load resolves caller-owned migration configuration before resource
+    construction.
+
+type Options[C any] struct {
+	Summary string
+	Load    Load[C]
+	Prepare Prepare[C]
+	Execute Execute
+}
+    Options configure the standard migrate command adapter.
+
+type OptionsError struct {
+	Field  string
+	Reason string
+}
+    OptionsError identifies one rejected option.
+
+func (err *OptionsError) Error() string
+    Error returns a secret-safe construction diagnostic.
+
+func (err *OptionsError) Unwrap() error
+    Unwrap exposes the stable option classification.
+
+type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, error)
     Prepare constructs only the resources needed by the migrate role.
 
 package postgres // import "github.com/faustbrian/go-migrations/postgres"
