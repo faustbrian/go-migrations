@@ -16,8 +16,8 @@ checksums, baselines, recovery, and the `public.go_schema_migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
-The module has a stable v1 API. The minimum supported toolchain is Go 1.26.6;
-CI tests with Go 1.27.0.
+The module has a stable v1 API. The minimum supported and tested toolchain is
+Go 1.27.0.
 
 ## Install
 
