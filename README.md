@@ -7,7 +7,7 @@
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
-[![Go](https://img.shields.io/badge/go-1.26.6-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/go-1.27.0-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `migrations` is an engine-neutral database migration runtime with a
@@ -17,7 +17,7 @@ Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
 The module has a stable v1 API. The minimum supported and tested toolchain is
-Go 1.26.6.
+Go 1.27.0.
 
 ## Install
 
