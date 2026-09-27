@@ -21,6 +21,7 @@ func TestConstructorsRejectEachInvalidFieldIndependently(t *testing.T) {
 		fingerprint Checksum
 	}{
 		{name: "version", baseline: "valid", fingerprint: checksum},
+		{name: "version exceeds ledger", version: Version(math.MaxInt64) + 1, baseline: "valid", fingerprint: checksum},
 		{name: "name", version: 1, baseline: "not valid", fingerprint: checksum},
 		{name: "fingerprint", version: 1, baseline: "valid"},
 	}
@@ -414,7 +415,12 @@ func TestReadMigrationFileRejectsEachHostileBoundary(t *testing.T) {
 
 	valid := strings.Repeat("x", maximumMigrationFileSize)
 	source := fstest.MapFS{"migration.sql": &fstest.MapFile{Data: []byte(valid)}}
-	contents, err := readMigrationFile(source, "migration.sql")
+	contents, err := readMigrationFile(
+		context.Background(),
+		mapSourceFileSystem{files: source},
+		"migration.sql",
+		maximumMigrationFileSize,
+	)
 	if err != nil {
 		t.Fatalf("readMigrationFile(maximum size) error = %v", err)
 	}
@@ -435,7 +441,12 @@ func TestReadMigrationFileRejectsEachHostileBoundary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			source := fstest.MapFS{"migration.sql": &fstest.MapFile{Data: test.data}}
-			if _, err := readMigrationFile(source, "migration.sql"); !errors.Is(err, ErrInvalidEncoding) {
+			if _, err := readMigrationFile(
+				context.Background(),
+				mapSourceFileSystem{files: source},
+				"migration.sql",
+				maximumMigrationFileSize,
+			); !errors.Is(err, ErrInvalidEncoding) {
 				t.Fatalf("readMigrationFile() error = %v, want ErrInvalidEncoding", err)
 			}
 		})

@@ -1,13 +1,15 @@
 # Documentation
 
-`migrations` is a stable v1 module for deterministic, engine-neutral database
-migrations. The root package owns migration identity and orchestration,
+This source prepares the next v2 `migrations` module for deterministic,
+engine-neutral database migrations; v1 remains the latest published line. The
+root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
 `adapters/service` adapts an explicit runner to a one-shot service command;
 `migrationsservice` preserves the released API as a compatibility facade,
 and `conformance` is the backend testing helper. The caller owns the source,
-observer, and database; operations are context-bounded and the module starts no
-background work.
+observer, and database; operations accept context cancellation and the module
+starts no background work. The threat model records the security controls and
+accepted risks for the planned v2 boundary.
 
 ## Getting started
 
@@ -15,14 +17,15 @@ background work.
 - [Executable deployment-job example](../examples/job/main.go)
 - [PostgreSQL integration](go-postgres.md)
 - [Architecture and engine contract](architecture.md)
-- [Public API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations)
-- [Backend conformance testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/conformance)
+- [Published v1 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations)
+- [Published v1 backend conformance testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/conformance)
 
 ## Operations
 
 - [Operations and disaster recovery](operations.md)
 - [Laravel-to-Go baseline runbook](laravel-baseline.md)
 - [Security](security.md)
+- [Versioned threat model](threat-model.md)
 - [Compatibility](compatibility.md)
 - [FAQ and troubleshooting](faq.md)
 

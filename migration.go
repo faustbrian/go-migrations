@@ -33,6 +33,10 @@ const (
 	TransactionModeNone
 )
 
+// MaxMigrationNameBytes is the largest canonical migration, baseline, or
+// ledger-record name accepted by the public contracts.
+const MaxMigrationNameBytes = 255
+
 var (
 	// ErrInvalidVersion indicates that a migration version is zero or malformed.
 	ErrInvalidVersion = errors.New("invalid migration version")
@@ -64,7 +68,7 @@ func ChecksumData(canonical []byte) Checksum {
 func ParseChecksum(value string) (Checksum, error) {
 	const prefix = "sha256:"
 
-	if !strings.HasPrefix(value, prefix) {
+	if len(value) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(value, prefix) {
 		return Checksum{}, ErrInvalidChecksum
 	}
 
@@ -116,11 +120,15 @@ func NewMigration(
 	if version == 0 || version > Version(math.MaxInt64) {
 		return Migration{}, ErrInvalidVersion
 	}
-	if !migrationNamePattern.MatchString(name) {
+	if !validMigrationName(name) {
 		return Migration{}, ErrInvalidName
 	}
 	if transactionMode != TransactionModeDefault && transactionMode != TransactionModeNone {
 		return Migration{}, ErrInvalidTransactionMode
+	}
+	if len(upSQL) > maximumMigrationFileSize ||
+		len(downSQL) > maximumMigrationFileSize-len(upSQL) {
+		return Migration{}, ErrInvalidEncoding
 	}
 	if strings.TrimSpace(upSQL) == "" {
 		return Migration{}, ErrEmptyUpSQL
@@ -128,9 +136,7 @@ func NewMigration(
 	if downSQL != "" && strings.TrimSpace(downSQL) == "" {
 		return Migration{}, ErrInvalidFormat
 	}
-	if len(upSQL) > maximumMigrationFileSize ||
-		len(downSQL) > maximumMigrationFileSize-len(upSQL) ||
-		!utf8.ValidString(upSQL) || !utf8.ValidString(downSQL) ||
+	if !utf8.ValidString(upSQL) || !utf8.ValidString(downSQL) ||
 		strings.IndexByte(upSQL, 0) >= 0 || strings.IndexByte(downSQL, 0) >= 0 {
 		return Migration{}, ErrInvalidEncoding
 	}
@@ -145,6 +151,10 @@ func NewMigration(
 	migration.checksum = checksumMigration(migration)
 
 	return migration, nil
+}
+
+func validMigrationName(name string) bool {
+	return len(name) <= MaxMigrationNameBytes && migrationNamePattern.MatchString(name)
 }
 
 // Version returns the immutable migration version.

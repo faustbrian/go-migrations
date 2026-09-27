@@ -140,6 +140,9 @@ func statusEntryFromRecord(state State, record Record) StatusEntry {
 }
 
 func statusRecords(records []Record) (Record, map[Version]Record, error) {
+	if len(records) > MaxMigrationRecords {
+		return Record{}, nil, ErrHistoryLimit
+	}
 	applied := make(map[Version]Record, len(records))
 	var baseline Record
 	var previous Version

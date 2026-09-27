@@ -4,14 +4,46 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
+
+func TestDatabaseFailureRedactsDriverDiagnosticByDefault(t *testing.T) {
+	t.Parallel()
+
+	cause := structuredDatabaseDiagnostic{Password: "private"}
+	err := databaseFailure("inspect migration ledger", cause)
+	if !errors.Is(err, ErrDatabaseOperationFailed) || !errors.Is(err, cause) {
+		t.Fatalf("databaseFailure() error = %v, want stable and driver classifications", err)
+	}
+	for _, format := range []string{"%s", "%q", "%v", "%+v", "%#v"} {
+		rendered := fmt.Sprintf(format, err)
+		if strings.Contains(rendered, cause.Error()) || strings.Contains(rendered, "private") {
+			t.Fatalf("databaseFailure() format %s disclosed driver diagnostic: %q", format, rendered)
+		}
+	}
+}
+
+type structuredDatabaseDiagnostic struct {
+	Password string
+}
+
+func (structuredDatabaseDiagnostic) Error() string { return "driver operation failed" }
+
+func TestDatabaseContextFailurePreservesNil(t *testing.T) {
+	t.Parallel()
+
+	if err := databaseContextFailure(context.Background(), "operation", nil); err != nil {
+		t.Fatalf("databaseContextFailure(nil) error = %v", err)
+	}
+}
 
 func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {
 	t.Parallel()
@@ -170,8 +202,8 @@ func TestNoTransactionRollbackLeavesRecoverableDirtyRecordOnFailure(t *testing.T
 		WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 12))
 	mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnError(fault)
 
-	if _, err := session.Rollback(context.Background(), migration); !errors.Is(err, fault) {
-		t.Fatalf("Rollback() error = %v, want injected failure", err)
+	if _, err := session.Rollback(context.Background(), migration); !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, fault) {
+		t.Fatalf("Rollback() error = %v, want redacted execution failure", err)
 	}
 	assertFaultExpectations(t, mock)
 }
@@ -233,17 +265,17 @@ func TestLockQueryCancellationReturnsContextError(t *testing.T) {
 	assertFaultExpectations(t, mock)
 }
 
-func TestDefaultLockRetryHonorsCancellation(t *testing.T) {
+func TestLockRetryWaitHonorsCancellation(t *testing.T) {
 	t.Parallel()
 
 	database, mock := faultDatabase(t)
-	backend, err := New(database)
+	backend, err := New(database, WithLockRetryInterval(time.Second))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery("pg_try_advisory_lock").
 		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	if _, err := backend.Acquire(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Acquire() error = %v, want context deadline", err)
@@ -256,7 +288,7 @@ func TestStatementTimeoutResetReportsFailure(t *testing.T) {
 
 	fault := errors.New("reset failed")
 	session, mock := faultSession(t, time.Second)
-	mock.ExpectExec("set_config").WillReturnError(fault)
+	mock.ExpectExec("RESET statement_timeout").WillReturnError(fault)
 	if err := session.resetSessionStatementTimeout(context.Background()); !errors.Is(err, fault) {
 		t.Fatalf("resetSessionStatementTimeout() error = %v, want reset failure", err)
 	}
@@ -451,6 +483,66 @@ func TestConfigurationAndReleasedSessionGuards(t *testing.T) {
 	if _, err := released.Baseline(context.Background(), baseline); !errors.Is(err, ErrSessionReleased) {
 		t.Fatalf("Baseline() error = %v", err)
 	}
+
+	guardedReleased := &session{gate: newOperationGate()}
+	if err := guardedReleased.Prepare(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Prepare() error = %v", err)
+	}
+	if _, err := guardedReleased.Records(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Records() error = %v", err)
+	}
+	if _, err := guardedReleased.Apply(context.Background(), migration); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Apply() error = %v", err)
+	}
+	if _, err := guardedReleased.Rollback(context.Background(), migration); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Rollback() error = %v", err)
+	}
+	if _, err := guardedReleased.Recover(context.Background(), migration, migrations.RecoveryMarkApplied); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Recover() error = %v", err)
+	}
+	if _, err := guardedReleased.Baseline(context.Background(), baseline); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("guarded Baseline() error = %v", err)
+	}
+}
+
+func TestRetainedDatabaseResultsEnforceTextAndObjectBounds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ledger text", func(t *testing.T) {
+		session, mock := faultSession(t, 0)
+		migration := faultMigration(t, migrations.TransactionModeDefault)
+		now := time.Now().UTC()
+		mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations").WillReturnRows(
+			sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).
+				AddRow("migration", 1, strings.Repeat("x", MaxLedgerBytes+1), migration.Checksum().String(), now, now, 1, false),
+		)
+		if _, err := session.Records(context.Background()); !errors.Is(err, ErrResourceLimit) {
+			t.Fatalf("Records(oversized text) error = %v, want ErrResourceLimit", err)
+		}
+		assertFaultExpectations(t, mock)
+	})
+
+	t.Run("fingerprint object count", func(t *testing.T) {
+		if _, err := Fingerprint(make([]SchemaObject, MaxSchemaObjects+1)); !errors.Is(err, ErrResourceLimit) {
+			t.Fatalf("Fingerprint(oversized count) error = %v, want ErrResourceLimit", err)
+		}
+	})
+
+	t.Run("catalog object text", func(t *testing.T) {
+		database, mock := faultDatabase(t)
+		backend, err := New(database)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").WillReturnRows(
+			sqlmock.NewRows([]string{"object_identity", "definition"}).
+				AddRow(strings.Repeat("x", MaxSchemaObjectIdentityBytes+1), "definition"),
+		)
+		if _, err := backend.InspectObjects(context.Background()); !errors.Is(err, ErrResourceLimit) {
+			t.Fatalf("InspectObjects(oversized text) error = %v, want ErrResourceLimit", err)
+		}
+		assertFaultExpectations(t, mock)
+	})
 }
 
 func TestSessionRecordsCoversSuccessAndDriverFailures(t *testing.T) {
@@ -510,11 +602,13 @@ func TestRecoveryPersistenceOutcomes(t *testing.T) {
 		target       error
 		wantDuration time.Duration
 	}{
-		{name: "applied missing", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"started_at"}), target: migrations.ErrNoDirtyMigration},
+		{name: "applied missing", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"execution_time_ms"}), target: migrations.ErrNoDirtyMigration},
 		{name: "applied query", action: migrations.RecoveryMarkApplied, err: errors.New("update failed")},
-		{name: "applied future start", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"started_at"}).AddRow(now.Add(time.Hour))},
+		{name: "applied future start", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"execution_time_ms"}).AddRow(int64(0))},
+		{name: "applied malformed duration", action: migrations.RecoveryMarkApplied, rows: sqlmock.NewRows([]string{"execution_time_ms"}).AddRow(int64(-1)), target: migrations.ErrInvalidRecord},
 		{name: "rolled back missing", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}), target: migrations.ErrNoDirtyMigration},
 		{name: "rolled back query", action: migrations.RecoveryMarkRolledBack, err: errors.New("delete failed")},
+		{name: "rolled back oversized duration", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(now, math.MaxInt64/int64(time.Millisecond)+1), target: migrations.ErrInvalidRecord},
 		{name: "rolled back success", action: migrations.RecoveryMarkRolledBack, rows: sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(now, 12), wantDuration: 12 * time.Millisecond},
 	}
 	for _, test := range tests {
@@ -522,9 +616,16 @@ func TestRecoveryPersistenceOutcomes(t *testing.T) {
 			session, mock := faultSession(t, 0)
 			query := "UPDATE public.go_schema_migrations"
 			if test.action == migrations.RecoveryMarkRolledBack {
-				query = "DELETE FROM public.go_schema_migrations"
+				query = "DELETE FROM public.go_schema_migrations (.+) execution_time_ms BETWEEN 0 AND \\$3"
 			}
 			expectation := mock.ExpectQuery(query)
+			if test.action == migrations.RecoveryMarkRolledBack {
+				expectation.WithArgs(
+					migrationLedgerVersion(migration),
+					migration.Checksum().String(),
+					maximumDurationMilliseconds,
+				)
+			}
 			if test.err != nil {
 				expectation.WillReturnError(test.err)
 			} else {
@@ -561,8 +662,9 @@ func TestTransactionalRollbackStopsAtEveryPersistenceBoundary(t *testing.T) {
 	migration := faultMigration(t, migrations.TransactionModeDefault)
 	appliedAt := time.Now().UTC()
 	tests := []struct {
-		name  string
-		setup func(sqlmock.Sqlmock)
+		name   string
+		setup  func(sqlmock.Sqlmock)
+		target error
 	}{
 		{name: "begin", setup: func(mock sqlmock.Sqlmock) { mock.ExpectBegin().WillReturnError(fault) }},
 		{name: "timeout", setup: func(mock sqlmock.Sqlmock) {
@@ -583,6 +685,15 @@ func TestTransactionalRollbackStopsAtEveryPersistenceBoundary(t *testing.T) {
 			mock.ExpectQuery("DELETE FROM public.go_schema_migrations").WillReturnError(fault)
 			mock.ExpectRollback()
 		}},
+		{name: "invalid duration", target: migrations.ErrInvalidRecord, setup: func(mock sqlmock.Sqlmock) {
+			mock.ExpectBegin()
+			mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery("DELETE FROM public.go_schema_migrations").WillReturnRows(
+				sqlmock.NewRows([]string{"finished_at", "execution_time_ms"}).AddRow(appliedAt, math.MaxInt64/int64(time.Millisecond)+1),
+			)
+			mock.ExpectRollback()
+		}},
 		{name: "commit", setup: func(mock sqlmock.Sqlmock) {
 			mock.ExpectBegin()
 			mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -599,6 +710,8 @@ func TestTransactionalRollbackStopsAtEveryPersistenceBoundary(t *testing.T) {
 			test.setup(mock)
 			if _, err := session.Rollback(context.Background(), migration); err == nil {
 				t.Fatal("Rollback() error = nil")
+			} else if test.target != nil && !errors.Is(err, test.target) {
+				t.Fatalf("Rollback() error = %v, want %v", err, test.target)
 			}
 			assertFaultExpectations(t, mock)
 		})
@@ -614,8 +727,8 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 	t.Run("timeout setup", func(t *testing.T) {
 		session, mock := faultSession(t, time.Second)
 		mock.ExpectExec("set_config").WillReturnError(fault)
-		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, fault) {
-			t.Fatalf("Apply() error = %v", err)
+		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, ErrDatabaseOperationFailed) || !errors.Is(err, fault) {
+			t.Fatalf("Apply() error = %v, want redacted database failure", err)
 		}
 		assertFaultExpectations(t, mock)
 	})
@@ -623,8 +736,8 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 	t.Run("dirty insert", func(t *testing.T) {
 		session, mock := faultSession(t, 0)
 		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnError(fault)
-		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, fault) {
-			t.Fatalf("Apply() error = %v", err)
+		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, ErrDatabaseOperationFailed) || !errors.Is(err, fault) {
+			t.Fatalf("Apply() error = %v, want redacted database failure", err)
 		}
 		assertFaultExpectations(t, mock)
 	})
@@ -657,9 +770,11 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 		mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(fault)
-		mock.ExpectExec("set_config").WillReturnError(errors.New("reset failed"))
-		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, fault) {
-			t.Fatalf("Apply() error = %v", err)
+		mock.ExpectExec("RESET statement_timeout").WillReturnError(errors.New("reset failed"))
+		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, migrations.ErrExecutionFailed) ||
+			errors.Is(err, fault) ||
+			!errors.Is(err, ErrDatabaseOperationFailed) {
+			t.Fatalf("Apply() error = %v, want redacted execution and reset failures", err)
 		}
 		assertFaultExpectations(t, mock)
 	})
@@ -672,9 +787,10 @@ func TestNoTransactionRollbackPersistenceOutcomes(t *testing.T) {
 	fault := errors.New("injected no-transaction rollback fault")
 	appliedAt := time.Now().UTC()
 	tests := []struct {
-		name  string
-		setup func(sqlmock.Sqlmock)
-		ok    bool
+		name   string
+		setup  func(sqlmock.Sqlmock)
+		target error
+		ok     bool
 	}{
 		{name: "timeout", setup: func(mock sqlmock.Sqlmock) { mock.ExpectExec("set_config").WillReturnError(fault) }},
 		{name: "missing", setup: func(mock sqlmock.Sqlmock) {
@@ -682,6 +798,9 @@ func TestNoTransactionRollbackPersistenceOutcomes(t *testing.T) {
 		}},
 		{name: "mark dirty", setup: func(mock sqlmock.Sqlmock) {
 			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnError(fault)
+		}},
+		{name: "invalid duration", target: migrations.ErrInvalidRecord, setup: func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, math.MaxInt64/int64(time.Millisecond)+1))
 		}},
 		{name: "delete", setup: func(mock sqlmock.Sqlmock) {
 			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
@@ -722,6 +841,8 @@ func TestNoTransactionRollbackPersistenceOutcomes(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatal("Rollback() error = nil")
+			} else if test.target != nil && !errors.Is(err, test.target) {
+				t.Fatalf("Rollback() error = %v, want %v", err, test.target)
 			}
 			assertFaultExpectations(t, mock)
 		})
@@ -893,7 +1014,11 @@ func faultSession(t *testing.T, timeout time.Duration) (*session, sqlmock.Sqlmoc
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 
-	return &session{connection: connection, statementTimeout: timeout}, mock
+	return &session{
+		connection:       connection,
+		statementTimeout: timeout,
+		gate:             newOperationGate(),
+	}, mock
 }
 
 func faultDatabase(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {

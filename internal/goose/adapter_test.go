@@ -3,12 +3,14 @@ package goose_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations"
-	gooseadapter "github.com/faustbrian/go-migrations/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	gooseadapter "github.com/faustbrian/go-migrations/v2/internal/goose"
 )
 
 func TestAdapterExecutesTransactionalMigrationOnCallerTransaction(t *testing.T) {
@@ -91,10 +93,10 @@ func TestAdapterRejectsInvalidMigrationAndExecutionMode(t *testing.T) {
 	}
 }
 
-func TestAdapterPropagatesExecutionFailuresAndInvalidCalls(t *testing.T) {
+func TestAdapterRedactsExecutionFailuresAndRejectsInvalidCalls(t *testing.T) {
 	t.Parallel()
 
-	fault := errors.New("statement failed")
+	fault := errors.New("statement failed: SELECT private_payload")
 	database, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New() error = %v", err)
@@ -117,12 +119,22 @@ func TestAdapterPropagatesExecutionFailuresAndInvalidCalls(t *testing.T) {
 		t.Fatalf("BeginTx() error = %v", err)
 	}
 	mock.ExpectExec(regexp.QuoteMeta(transactional.UpSQL())).WillReturnError(fault)
-	if err := txAdapter.ApplyTx(context.Background(), transaction); !errors.Is(err, fault) {
-		t.Fatalf("ApplyTx() error = %v", err)
-	}
+	assertExecutionErrorRedacted(t, txAdapter.ApplyTx(context.Background(), transaction), fault)
 	mock.ExpectExec(regexp.QuoteMeta(transactional.DownSQL())).WillReturnError(fault)
-	if err := txAdapter.RollbackTx(context.Background(), transaction); !errors.Is(err, fault) {
-		t.Fatalf("RollbackTx() error = %v", err)
+	assertExecutionErrorRedacted(t, txAdapter.RollbackTx(context.Background(), transaction), fault)
+	deadlineFault := fmt.Errorf("private deadline detail: %w", context.DeadlineExceeded)
+	mock.ExpectExec(regexp.QuoteMeta(transactional.UpSQL())).WillReturnError(deadlineFault)
+	deadlineErr := txAdapter.ApplyTx(context.Background(), transaction)
+	assertExecutionErrorRedacted(t, deadlineErr, deadlineFault)
+	if !errors.Is(deadlineErr, context.DeadlineExceeded) {
+		t.Fatalf("ApplyTx(deadline) error = %v, want context deadline", deadlineErr)
+	}
+	canceledFault := fmt.Errorf("private cancellation detail: %w", context.Canceled)
+	mock.ExpectExec(regexp.QuoteMeta(transactional.DownSQL())).WillReturnError(canceledFault)
+	canceledErr := txAdapter.RollbackTx(context.Background(), transaction)
+	assertExecutionErrorRedacted(t, canceledErr, canceledFault)
+	if !errors.Is(canceledErr, context.Canceled) {
+		t.Fatalf("RollbackTx(canceled) error = %v, want context cancellation", canceledErr)
 	}
 	mock.ExpectRollback()
 	if err := transaction.Rollback(); err != nil {
@@ -138,13 +150,9 @@ func TestAdapterPropagatesExecutionFailuresAndInvalidCalls(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	mock.ExpectExec(regexp.QuoteMeta(noTx.UpSQL())).WillReturnError(fault)
-	if err := noTxAdapter.ApplyConn(context.Background(), connection); !errors.Is(err, fault) {
-		t.Fatalf("ApplyConn() error = %v", err)
-	}
+	assertExecutionErrorRedacted(t, noTxAdapter.ApplyConn(context.Background(), connection), fault)
 	mock.ExpectExec(regexp.QuoteMeta(noTx.DownSQL())).WillReturnError(fault)
-	if err := noTxAdapter.RollbackConn(context.Background(), connection); !errors.Is(err, fault) {
-		t.Fatalf("RollbackConn() error = %v", err)
-	}
+	assertExecutionErrorRedacted(t, noTxAdapter.RollbackConn(context.Background(), connection), fault)
 	if err := noTxAdapter.ApplyTx(context.Background(), transaction); !errors.Is(err, gooseadapter.ErrUnsupportedMigration) {
 		t.Fatalf("ApplyTx(no-tx) error = %v", err)
 	}
@@ -179,6 +187,20 @@ func TestAdapterPropagatesExecutionFailuresAndInvalidCalls(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("database expectations: %v", err)
+	}
+}
+
+func assertExecutionErrorRedacted(t *testing.T, err error, sensitive error) {
+	t.Helper()
+
+	if !errors.Is(err, migrations.ErrExecutionFailed) {
+		t.Fatalf("execution error = %v, want ErrExecutionFailed", err)
+	}
+	if errors.Is(err, sensitive) {
+		t.Fatal("execution error retained the sensitive driver cause")
+	}
+	if strings.Contains(err.Error(), sensitive.Error()) || strings.Contains(err.Error(), "private_payload") {
+		t.Fatalf("execution error disclosed driver detail: %q", err)
 	}
 }
 

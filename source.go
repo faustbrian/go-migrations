@@ -5,17 +5,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
-const maximumMigrationFileSize = 16 << 20
+const (
+	defaultSourceTimeout          = 10 * time.Minute
+	maximumMigrationFileSize      = 16 << 20
+	maximumMigrationFilenameBytes = 19 + 1 + MaxMigrationNameBytes + len(".sql")
+	// MaxMigrationFiles is the largest complete source inventory retained by
+	// one load operation.
+	MaxMigrationFiles = 4096
+	// MaxMigrationSourceRootBytes is the largest source root path accepted by
+	// NewFSSource.
+	MaxMigrationSourceRootBytes = 4096
+	// MaxMigrationSourceNameBytes bounds aggregate filename data returned by a
+	// source directory operation.
+	MaxMigrationSourceNameBytes = 1 << 20
+	// MaxMigrationSourceBytes bounds aggregate migration-file content read by
+	// one load operation.
+	MaxMigrationSourceBytes = 16 << 20
+)
 
 var (
 	// ErrInvalidSource indicates an unusable filesystem source configuration.
@@ -30,61 +46,121 @@ var (
 	ErrUnexpectedSourceEntry = errors.New("unexpected migration source entry")
 	// ErrDuplicateVersion indicates that two source files claim one identity.
 	ErrDuplicateVersion = errors.New("duplicate migration version")
+	// ErrSourceLimit indicates a source inventory whose count, filename data, or
+	// aggregate file content exceeds the finite load budget.
+	ErrSourceLimit = errors.New("migration source limit exceeded")
 )
 
 var migrationFilenamePattern = regexp.MustCompile(
 	`^([0-9]+)_([a-z0-9]+(?:_[a-z0-9]+)*)\.sql$`,
 )
 
-// Source loads a complete immutable migration history.
+// Source loads a complete immutable migration history. Implementations must
+// honor the supplied context and return at most MaxMigrationFiles entries.
 type Source interface {
 	Load(context.Context) ([]Migration, error)
 }
 
-// FSSource loads canonical SQL migrations from one fs.FS directory. It works
-// with embed.FS and rejects unrelated entries so packaging mistakes fail closed.
-type FSSource struct {
-	fs   fs.FS
-	root string
+// SourceEntry is the bounded directory metadata needed to discover a migration.
+type SourceEntry struct {
+	// Name is the base filename within the source root.
+	Name string
+	// Directory reports whether the entry is a directory.
+	Directory bool
 }
 
-// NewFSSource constructs a source rooted at a valid fs.FS path.
-func NewFSSource(sourceFS fs.FS, root string) (*FSSource, error) {
-	if sourceFS == nil || !fs.ValidPath(root) {
+// SourceDirectoryLimits are inclusive budgets that a SourceFileSystem must
+// enforce before retaining or returning directory metadata.
+type SourceDirectoryLimits struct {
+	// MaxEntries is the largest complete entry inventory.
+	MaxEntries int
+	// MaxNameBytes is the largest individual entry name.
+	MaxNameBytes int
+	// MaxTotalNameBytes is the largest aggregate entry-name payload.
+	MaxTotalNameBytes int
+}
+
+// SourceFileSystem provides cancellation-aware, bounded migration file access.
+// Implementations must pass ctx to every blocking operation, stop promptly on
+// cancellation, and enforce the supplied inclusive limits before retaining
+// input data. They return context errors for cancellation, ErrSourceLimit or
+// ErrInvalidEncoding for exceeded budgets, and a private implementation error
+// for other failures; FSSource redacts those private errors as ErrInvalidSource.
+type SourceFileSystem interface {
+	ReadDir(ctx context.Context, root string, limits SourceDirectoryLimits) ([]SourceEntry, error)
+	ReadFile(ctx context.Context, name string, maxBytes int) ([]byte, error)
+}
+
+// FSSource loads canonical SQL migrations from one cancellation-aware source
+// directory and rejects unrelated entries so packaging mistakes fail closed.
+type FSSource struct {
+	fs      SourceFileSystem
+	root    string
+	timeout time.Duration
+}
+
+// FSSourceOption configures a filesystem source.
+type FSSourceOption func(*FSSource) error
+
+// WithSourceTimeout replaces the finite default complete-load timeout.
+func WithSourceTimeout(timeout time.Duration) FSSourceOption {
+	return func(source *FSSource) error {
+		if timeout <= 0 {
+			return ErrInvalidSource
+		}
+		source.timeout = timeout
+
+		return nil
+	}
+}
+
+// NewFSSource constructs a source rooted at a valid fs.ValidPath directory.
+func NewFSSource(sourceFS SourceFileSystem, root string, options ...FSSourceOption) (*FSSource, error) {
+	if sourceFS == nil || len(root) > MaxMigrationSourceRootBytes || !fs.ValidPath(root) {
 		return nil, ErrInvalidSource
 	}
 
-	return &FSSource{fs: sourceFS, root: root}, nil
+	source := &FSSource{fs: sourceFS, root: root, timeout: defaultSourceTimeout}
+	for _, option := range options {
+		if option == nil {
+			return nil, ErrInvalidSource
+		}
+		if err := option(source); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidSource, err)
+		}
+	}
+
+	return source, nil
 }
 
 // Load reads, validates, and sorts the complete migration history.
 func (source *FSSource) Load(ctx context.Context) ([]Migration, error) {
-	if source == nil || source.fs == nil || !fs.ValidPath(source.root) {
+	if source == nil || source.fs == nil || source.timeout <= 0 || !fs.ValidPath(source.root) {
 		return nil, ErrInvalidSource
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	loadCtx, cancel := context.WithTimeout(ctx, source.timeout)
+	defer cancel()
 
-	entries, err := fs.ReadDir(source.fs, source.root)
+	entries, err := readMigrationEntries(loadCtx, source.fs, source.root)
 	if err != nil {
-		return nil, fmt.Errorf("%w: read %q: %w", ErrInvalidSource, source.root, err)
+		return nil, err
 	}
 
 	migrations := make([]Migration, 0, len(entries))
 	versions := make(map[Version]string, len(entries))
+	totalBytes := 0
 
 	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if entry.IsDir() || path.Ext(entry.Name()) != ".sql" {
-			return nil, fmt.Errorf("%w: %s", ErrUnexpectedSourceEntry, entry.Name())
+		if entry.Directory || path.Ext(entry.Name) != ".sql" {
+			return nil, ErrUnexpectedSourceEntry
 		}
 
-		version, name, err := parseMigrationFilename(entry.Name())
+		version, name, err := parseMigrationFilename(entry.Name)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+			return nil, err
 		}
 		if prior, exists := versions[version]; exists {
 			return nil, fmt.Errorf(
@@ -92,20 +168,27 @@ func (source *FSSource) Load(ctx context.Context) ([]Migration, error) {
 				ErrDuplicateVersion,
 				version,
 				prior,
-				entry.Name(),
+				entry.Name,
 			)
 		}
 
-		contents, err := readMigrationFile(source.fs, path.Join(source.root, entry.Name()))
+		remainingBytes := MaxMigrationSourceBytes - totalBytes
+		contents, err := readMigrationFile(
+			loadCtx,
+			source.fs,
+			path.Join(source.root, entry.Name),
+			min(maximumMigrationFileSize, remainingBytes),
+		)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("%q: %w", entry.Name, err)
 		}
+		totalBytes += len(contents)
 		migration, err := parseMigrationFile(version, name, contents)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("%q: %w", entry.Name, err)
 		}
 
-		versions[version] = entry.Name()
+		versions[version] = entry.Name
 		migrations = append(migrations, migration)
 	}
 
@@ -114,6 +197,45 @@ func (source *FSSource) Load(ctx context.Context) ([]Migration, error) {
 	})
 
 	return migrations, nil
+}
+
+func readMigrationEntries(
+	ctx context.Context,
+	sourceFS SourceFileSystem,
+	root string,
+) ([]SourceEntry, error) {
+	limits := SourceDirectoryLimits{
+		MaxEntries:        MaxMigrationFiles,
+		MaxNameBytes:      maximumMigrationFilenameBytes,
+		MaxTotalNameBytes: MaxMigrationSourceNameBytes,
+	}
+	entries, err := sourceFS.ReadDir(ctx, root, limits)
+	if err != nil {
+		return nil, normalizeSourceError(ctx, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(entries) > limits.MaxEntries {
+		return nil, ErrSourceLimit
+	}
+
+	totalNameBytes := 0
+	validated := make([]SourceEntry, 0, len(entries))
+	for _, entry := range entries {
+		if len(entry.Name) > limits.MaxNameBytes ||
+			len(entry.Name) > limits.MaxTotalNameBytes-totalNameBytes {
+			return nil, ErrSourceLimit
+		}
+		totalNameBytes += len(entry.Name)
+		validated = append(validated, entry)
+	}
+
+	slices.SortFunc(validated, func(left, right SourceEntry) int {
+		return strings.Compare(left.Name, right.Name)
+	})
+
+	return validated, nil
 }
 
 func parseMigrationFilename(filename string) (Version, string, error) {
@@ -130,16 +252,27 @@ func parseMigrationFilename(filename string) (Version, string, error) {
 	return Version(parsed), matches[2], nil
 }
 
-func readMigrationFile(sourceFS fs.FS, filename string) (string, error) {
-	file, err := sourceFS.Open(filename)
+func readMigrationFile(
+	ctx context.Context,
+	sourceFS SourceFileSystem,
+	filename string,
+	maxBytes int,
+) (string, error) {
+	contents, err := sourceFS.ReadFile(ctx, filename, maxBytes)
 	if err != nil {
-		return "", fmt.Errorf("%w: open: %w", ErrInvalidSource, err)
+		if maxBytes < maximumMigrationFileSize && errors.Is(err, ErrInvalidEncoding) {
+			return "", ErrSourceLimit
+		}
+		return "", normalizeSourceError(ctx, err)
 	}
-	defer func() { _ = file.Close() }()
-
-	contents, err := io.ReadAll(io.LimitReader(file, maximumMigrationFileSize+1))
-	if err != nil {
-		return "", fmt.Errorf("%w: read: %w", ErrInvalidSource, err)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if len(contents) > maxBytes {
+		if maxBytes < maximumMigrationFileSize {
+			return "", ErrSourceLimit
+		}
+		return "", ErrInvalidEncoding
 	}
 	if len(contents) > maximumMigrationFileSize ||
 		!utf8.Valid(contents) ||
@@ -149,6 +282,26 @@ func readMigrationFile(sourceFS fs.FS, filename string) (string, error) {
 	}
 
 	return string(contents), nil
+}
+
+func normalizeSourceError(ctx context.Context, err error) error {
+	if contextError := ctx.Err(); contextError != nil {
+		return contextError
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, ErrSourceLimit) {
+		return ErrSourceLimit
+	}
+	if errors.Is(err, ErrInvalidEncoding) {
+		return ErrInvalidEncoding
+	}
+
+	return ErrInvalidSource
 }
 
 func parseMigrationFile(version Version, name string, contents string) (Migration, error) {

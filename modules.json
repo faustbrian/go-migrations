@@ -5,14 +5,14 @@
   "modules": [
     {
       "directory": ".",
-      "module_path": "github.com/faustbrian/go-migrations",
+      "module_path": "github.com/faustbrian/go-migrations/v2",
       "go_version": "1.27.0",
       "packages": [
         {
           "module_directory": ".",
           "directory": ".",
           "name": "migrations",
-          "import_path": "github.com/faustbrian/go-migrations",
+          "import_path": "github.com/faustbrian/go-migrations/v2",
           "kind": "public",
           "production": true,
           "executable": true,
@@ -24,7 +24,7 @@
           "module_directory": ".",
           "directory": "adapters/service",
           "name": "migrationsservice",
-          "import_path": "github.com/faustbrian/go-migrations/adapters/service",
+          "import_path": "github.com/faustbrian/go-migrations/v2/adapters/service",
           "kind": "public",
           "production": true,
           "executable": true,
@@ -36,7 +36,7 @@
           "module_directory": ".",
           "directory": "conformance",
           "name": "conformance",
-          "import_path": "github.com/faustbrian/go-migrations/conformance",
+          "import_path": "github.com/faustbrian/go-migrations/v2/conformance",
           "kind": "test support",
           "production": false,
           "executable": true,
@@ -48,7 +48,7 @@
           "module_directory": ".",
           "directory": "examples/job",
           "name": "main",
-          "import_path": "github.com/faustbrian/go-migrations/examples/job",
+          "import_path": "github.com/faustbrian/go-migrations/v2/examples/job",
           "kind": "example",
           "production": false,
           "executable": true,
@@ -60,7 +60,7 @@
           "module_directory": ".",
           "directory": "internal/goose",
           "name": "goose",
-          "import_path": "github.com/faustbrian/go-migrations/internal/goose",
+          "import_path": "github.com/faustbrian/go-migrations/v2/internal/goose",
           "kind": "internal",
           "production": true,
           "executable": true,
@@ -72,7 +72,7 @@
           "module_directory": ".",
           "directory": "migrationsservice",
           "name": "migrationsservice",
-          "import_path": "github.com/faustbrian/go-migrations/migrationsservice",
+          "import_path": "github.com/faustbrian/go-migrations/v2/migrationsservice",
           "kind": "public",
           "production": true,
           "executable": true,
@@ -84,7 +84,7 @@
           "module_directory": ".",
           "directory": "postgres",
           "name": "postgres",
-          "import_path": "github.com/faustbrian/go-migrations/postgres",
+          "import_path": "github.com/faustbrian/go-migrations/v2/postgres",
           "kind": "public",
           "production": true,
           "executable": true,
@@ -94,14 +94,14 @@
         }
       ],
       "purpose": "`migrations` is an engine-neutral database migration runtime with a PostgreSQL backend. It owns migration identity, planning, status, locking, checksums, baselines, recovery, and the `public.go_schema_migrations` ledger. Goose is an internal, pinned SQL execution detail and never appears in the public API.",
-      "lifecycle": "stable",
+      "lifecycle": "planned",
       "kind": "public library",
-      "releasable": true,
+      "releasable": false,
       "family": "persistence-and-durability",
       "family_label": "Persistence And Durability",
       "family_description": "Durable state, delivery, coordination, recovery, and operational lifecycle.",
       "family_order": 4,
-      "version": "1.1.0",
+      "version": "2.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [
         "github.com/faustbrian/go-cli",
@@ -157,17 +157,17 @@
         ],
         "public_package_identifier": "migrations",
         "primary_entry_packages": [
-          "github.com/faustbrian/go-migrations"
+          "github.com/faustbrian/go-migrations/v2"
         ],
         "package_selection": {
-          "github.com/faustbrian/go-migrations": "Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination.",
-          "github.com/faustbrian/go-migrations/conformance": "Use when implementing or replacing a migration engine to verify the complete public runner contract.",
-          "github.com/faustbrian/go-migrations/adapters/service": "Use to adapt an explicitly constructed runner and operation to the standard one-shot service migrate command.",
-          "github.com/faustbrian/go-migrations/migrationsservice": "Use only as the compatibility facade for the canonical adapters/service package.",
-          "github.com/faustbrian/go-migrations/postgres": "Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting."
+          "github.com/faustbrian/go-migrations/v2": "Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination.",
+          "github.com/faustbrian/go-migrations/v2/conformance": "Use when implementing or replacing a migration engine to verify the complete public runner contract.",
+          "github.com/faustbrian/go-migrations/v2/adapters/service": "Use to adapt an explicitly constructed runner and operation to the standard one-shot service migrate command.",
+          "github.com/faustbrian/go-migrations/v2/migrationsservice": "Use only as the compatibility facade for the canonical adapters/service package.",
+          "github.com/faustbrian/go-migrations/v2/postgres": "Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting."
         },
-        "lifecycle_status": "active",
-        "maturity": "stable",
+        "lifecycle_status": "planned",
+        "maturity": "preview",
         "construction_styles": [
           "functional-options",
           "new-options",
@@ -188,9 +188,9 @@
         },
         "optional_owned_dependencies": [],
         "adapters": [
-          "github.com/faustbrian/go-migrations/adapters/service",
-          "github.com/faustbrian/go-migrations/migrationsservice",
-          "github.com/faustbrian/go-migrations/postgres"
+          "github.com/faustbrian/go-migrations/v2/adapters/service",
+          "github.com/faustbrian/go-migrations/v2/migrationsservice",
+          "github.com/faustbrian/go-migrations/v2/postgres"
         ],
         "companions": [
           "github.com/faustbrian/go-idempotency",
@@ -225,9 +225,9 @@
         },
         "known_good_compatibility_sets": [],
         "delivery": {
-          "implementation": "not-started",
-          "hardening": "not-started",
-          "release": "not-started"
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "blocked"
         }
       },
       "gates": {

@@ -3,9 +3,10 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 func TestRunnerBaselineRecordsReviewedFingerprintWithoutReplayingMigrations(t *testing.T) {
@@ -91,6 +92,22 @@ func TestNewBaselineRejectsInvalidContract(t *testing.T) {
 
 	if _, err := migrations.NewBaseline(0, "laravel", migrations.Checksum{}); !errors.Is(err, migrations.ErrInvalidBaseline) {
 		t.Fatalf("NewBaseline() error = %v, want ErrInvalidBaseline", err)
+	}
+}
+
+func TestNewBaselineBoundsCanonicalNameBytes(t *testing.T) {
+	t.Parallel()
+
+	fingerprint, err := migrations.ParseChecksum("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("ParseChecksum() error = %v", err)
+	}
+	maximumName := strings.Repeat("a", migrations.MaxMigrationNameBytes)
+	if _, err := migrations.NewBaseline(1, maximumName, fingerprint); err != nil {
+		t.Fatalf("NewBaseline(maximum name) error = %v", err)
+	}
+	if _, err := migrations.NewBaseline(1, maximumName+"a", fingerprint); !errors.Is(err, migrations.ErrInvalidBaseline) {
+		t.Fatalf("NewBaseline(oversized name) error = %v, want ErrInvalidBaseline", err)
 	}
 }
 

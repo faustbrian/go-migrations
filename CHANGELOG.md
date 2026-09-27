@@ -5,6 +5,39 @@ and Semantic Versioning.
 
 ## Unreleased
 
+### Changed
+
+- Discard dedicated PostgreSQL connections after uncertain lock acquisition or
+  unlock failures instead of returning potentially locked sessions to the pool.
+  Reject malformed stored durations before nontransactional rollback marks a
+  clean ledger row dirty.
+- Prepare the secure-default behavior for the
+  `github.com/faustbrian/go-migrations/v2` module path. V1 consumers must add
+  `/v2` to migrations imports and provide a cancellation-aware, bounded
+  `SourceFileSystem`; the persisted ledger contract remains unchanged.
+- Default PostgreSQL advisory-lock acquisition to 30 seconds and migration
+  statements to five minutes, while allowing only positive finite overrides.
+- Redact migration SQL execution and PostgreSQL driver diagnostics from default
+  errors and observer output while retaining stable error classifications.
+- Add a versioned repository threat model with owned accepted risks and an
+  explicit planned-major release boundary.
+- Require source providers to accept cancellation and enforce caller-supplied
+  directory and file budgets before returning data. Revalidate at most 4,096
+  files, a 4 KiB source root, 1 MiB of aggregate filename data, 255-byte
+  canonical names, and 16 MiB of aggregate migration-file content per complete
+  source, with a finite configurable complete-load timeout.
+- Reject custom source and backend histories above 4,096 migrations or 4,097
+  records before planner and status allocation, and redact baseline
+  fingerprints from observer failures.
+- Reject persisted millisecond durations that cannot fit `time.Duration`
+  before rollback or recovery can consume or remove the affected ledger row.
+- Bound retained PostgreSQL ledger and schema-catalog state, apply a finite
+  ten-minute default to primary database-operation work, and make contention
+  for serialized session ownership cancellation-aware. Standard-library
+  context-free transaction finalization and cleanup remain an owned risk.
+- Reject migration, baseline, and ledger-record versions above PostgreSQL's
+  signed `bigint` range before Goose or database conversion.
+
 ## 1.1.0 - 2026-09-09
 
 ### Changed

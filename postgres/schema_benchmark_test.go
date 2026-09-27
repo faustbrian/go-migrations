@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 var benchmarkFingerprintSink migrations.Checksum

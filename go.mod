@@ -1,4 +1,4 @@
-module github.com/faustbrian/go-migrations
+module github.com/faustbrian/go-migrations/v2
 
 go 1.27.0
 

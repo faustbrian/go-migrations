@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
-	canonical "github.com/faustbrian/go-migrations/adapters/service"
-	legacy "github.com/faustbrian/go-migrations/migrationsservice" //nolint:staticcheck // Compatibility coverage requires the deprecated path.
+	migrations "github.com/faustbrian/go-migrations/v2"
+	canonical "github.com/faustbrian/go-migrations/v2/adapters/service"
+	legacy "github.com/faustbrian/go-migrations/v2/migrationsservice" //nolint:staticcheck // Compatibility coverage requires the deprecated path.
 	service "github.com/faustbrian/go-service"
 )
 
@@ -21,22 +21,22 @@ func TestServiceSuccessorPreservesLegacyNamedIdentitiesAndSentinels(t *testing.T
 		got  reflect.Type
 		want string
 	}{
-		{"legacy Load", reflect.TypeOf((legacy.Load[int])(nil)), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy Prepare", reflect.TypeOf((legacy.Prepare[int])(nil)), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy Execute", reflect.TypeOf((legacy.Execute)(nil)), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy Execution", reflect.TypeOf(legacy.Execution{}), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy Options", reflect.TypeOf(legacy.Options[int]{}), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy OptionsError", reflect.TypeOf(legacy.OptionsError{}), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy ExecutionError", reflect.TypeOf(legacy.ExecutionError{}), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"legacy Adapter", reflect.TypeOf(legacy.Adapter[int]{}), "github.com/faustbrian/go-migrations/migrationsservice"},
-		{"canonical Load", reflect.TypeOf((canonical.Load[int])(nil)), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical Prepare", reflect.TypeOf((canonical.Prepare[int])(nil)), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical Execute", reflect.TypeOf((canonical.Execute)(nil)), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical Execution", reflect.TypeOf(canonical.Execution{}), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical Options", reflect.TypeOf(canonical.Options[int]{}), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical OptionsError", reflect.TypeOf(canonical.OptionsError{}), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical ExecutionError", reflect.TypeOf(canonical.ExecutionError{}), "github.com/faustbrian/go-migrations/adapters/service"},
-		{"canonical Adapter", reflect.TypeOf(canonical.Adapter[int]{}), "github.com/faustbrian/go-migrations/adapters/service"},
+		{"legacy Load", reflect.TypeOf((legacy.Load[int])(nil)), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy Prepare", reflect.TypeOf((legacy.Prepare[int])(nil)), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy Execute", reflect.TypeOf((legacy.Execute)(nil)), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy Execution", reflect.TypeOf(legacy.Execution{}), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy Options", reflect.TypeOf(legacy.Options[int]{}), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy OptionsError", reflect.TypeOf(legacy.OptionsError{}), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy ExecutionError", reflect.TypeOf(legacy.ExecutionError{}), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"legacy Adapter", reflect.TypeOf(legacy.Adapter[int]{}), "github.com/faustbrian/go-migrations/v2/migrationsservice"},
+		{"canonical Load", reflect.TypeOf((canonical.Load[int])(nil)), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical Prepare", reflect.TypeOf((canonical.Prepare[int])(nil)), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical Execute", reflect.TypeOf((canonical.Execute)(nil)), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical Execution", reflect.TypeOf(canonical.Execution{}), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical Options", reflect.TypeOf(canonical.Options[int]{}), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical OptionsError", reflect.TypeOf(canonical.OptionsError{}), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical ExecutionError", reflect.TypeOf(canonical.ExecutionError{}), "github.com/faustbrian/go-migrations/v2/adapters/service"},
+		{"canonical Adapter", reflect.TypeOf(canonical.Adapter[int]{}), "github.com/faustbrian/go-migrations/v2/adapters/service"},
 	} {
 		if got := test.got.PkgPath(); got != test.want {
 			t.Errorf("%s package = %q, want %q", test.name, got, test.want)

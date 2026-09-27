@@ -15,7 +15,7 @@ type SQLDatabaseProvider interface {
 
 func migrationRunner(
 	provider SQLDatabaseProvider,
-	files fs.FS,
+	files migrations.SourceFileSystem,
 ) (*migrations.Runner, error) {
 	source, err := migrations.NewFSSource(files, "migrations")
 	if err != nil {

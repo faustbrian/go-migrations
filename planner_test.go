@@ -2,11 +2,44 @@ package migrations_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
+
+func TestNewRecordBoundsCanonicalNameBytes(t *testing.T) {
+	t.Parallel()
+
+	checksum, err := migrations.ParseChecksum("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("ParseChecksum() error = %v", err)
+	}
+	maximumName := strings.Repeat("a", migrations.MaxMigrationNameBytes)
+	if _, err := migrations.NewRecord(
+		migrations.RecordKindMigration,
+		1,
+		maximumName,
+		checksum,
+		time.Unix(1_700_000_000, 0).UTC(),
+		0,
+		false,
+	); err != nil {
+		t.Fatalf("NewRecord(maximum name) error = %v", err)
+	}
+	if _, err := migrations.NewRecord(
+		migrations.RecordKindMigration,
+		1,
+		maximumName+"a",
+		checksum,
+		time.Unix(1_700_000_000, 0).UTC(),
+		0,
+		false,
+	); !errors.Is(err, migrations.ErrInvalidRecord) {
+		t.Fatalf("NewRecord(oversized name) error = %v, want ErrInvalidRecord", err)
+	}
+}
 
 func TestPlanUpReturnsOnlyPendingMigrations(t *testing.T) {
 	t.Parallel()
@@ -29,6 +62,27 @@ func TestPlanUpReturnsOnlyPendingMigrations(t *testing.T) {
 	steps[0] = migrations.Step{}
 	if plan.Steps()[0].Migration().Version() != 2 {
 		t.Fatal("Steps() exposed mutable plan storage")
+	}
+}
+
+func TestPlanRejectsHistoryBeyondFiniteBudget(t *testing.T) {
+	t.Parallel()
+
+	tooManyMigrations := make([]migrations.Migration, migrations.MaxMigrationFiles+1)
+	tooManyRecords := make([]migrations.Record, migrations.MaxMigrationRecords+1)
+	for _, test := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "available", run: func() error { _, err := migrations.PlanUp(tooManyMigrations, nil); return err }},
+		{name: "records", run: func() error { _, err := migrations.PlanUp(nil, tooManyRecords); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if err := test.run(); !errors.Is(err, migrations.ErrHistoryLimit) {
+				t.Fatalf("plan error = %v, want ErrHistoryLimit", err)
+			}
+		})
 	}
 }
 

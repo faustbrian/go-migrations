@@ -7,8 +7,8 @@ import (
 	"io"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
-	migrationsservice "github.com/faustbrian/go-migrations/adapters/service"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	migrationsservice "github.com/faustbrian/go-migrations/v2/adapters/service"
 	service "github.com/faustbrian/go-service"
 )
 

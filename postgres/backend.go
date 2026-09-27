@@ -4,23 +4,32 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
-	gooseadapter "github.com/faustbrian/go-migrations/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	gooseadapter "github.com/faustbrian/go-migrations/v2/internal/goose"
 )
 
 const (
 	advisoryLockKey int64 = 0x676f6d6967726174
+	// MaxLedgerRecords permits one baseline plus the complete bounded migration
+	// source while preventing a hostile ledger from growing retained state.
+	MaxLedgerRecords = migrations.MaxMigrationFiles + 1
+	// MaxLedgerBytes bounds aggregate text retained from one ledger read.
+	MaxLedgerBytes = 16 << 20
 	// Literal nanoseconds keep these safety budgets indivisible while retaining
 	// their exact documented durations.
-	defaultLockRetryInterval   time.Duration = 100_000_000
-	statementTimeoutResetLimit time.Duration = 30_000_000_000
+	defaultLockRetryInterval    time.Duration = 100_000_000
+	defaultLockTimeout          time.Duration = 30_000_000_000
+	defaultStatementTimeout     time.Duration = 300_000_000_000
+	defaultOperationTimeout     time.Duration = 600_000_000_000
+	statementTimeoutResetLimit  time.Duration = 30_000_000_000
+	maximumDurationMilliseconds               = math.MaxInt64 / int64(time.Millisecond)
 )
 
 var (
@@ -32,7 +41,56 @@ var (
 	ErrSessionReleased = errors.New("PostgreSQL migration session released")
 	// ErrLedgerConflict indicates that owned-ledger state changed unexpectedly.
 	ErrLedgerConflict = errors.New("PostgreSQL migration ledger conflict")
+	// ErrDatabaseOperationFailed identifies a PostgreSQL driver failure whose
+	// diagnostic is available only through errors.Is or errors.As.
+	ErrDatabaseOperationFailed = errors.New("PostgreSQL migration database operation failed")
+	// ErrResourceLimit indicates that PostgreSQL returned more migration or
+	// schema state than the package can safely retain.
+	ErrResourceLimit = errors.New("PostgreSQL migration resource limit exceeded")
 )
+
+type databaseError struct {
+	operation string
+	cause     error
+}
+
+func (err *databaseError) Error() string {
+	return err.operation + ": " + ErrDatabaseOperationFailed.Error()
+}
+
+func (err *databaseError) Format(state fmt.State, verb rune) {
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", err.Error())
+
+		return
+	}
+
+	_, _ = fmt.Fprint(state, err.Error())
+}
+
+func (err *databaseError) Unwrap() []error {
+	return []error{ErrDatabaseOperationFailed, err.cause}
+}
+
+func databaseFailure(operation string, cause error) error {
+	if cause == nil {
+		return nil
+	}
+
+	return &databaseError{operation: operation, cause: cause}
+}
+
+func databaseContextFailure(ctx context.Context, operation string, cause error) error {
+	failure := databaseFailure(operation, cause)
+	if failure == nil {
+		return nil
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return errors.Join(failure, contextErr)
+	}
+
+	return failure
+}
 
 const createLedgerSQL = `CREATE TABLE IF NOT EXISTS public.go_schema_migrations (
     version bigint PRIMARY KEY CHECK (version > 0),
@@ -64,9 +122,10 @@ func WithLockRetryInterval(interval time.Duration) Option {
 	}
 }
 
-// WithLockTimeout bounds advisory-lock polling independently of the caller's
-// broader job deadline. Lock attempts repeat only while another session owns
-// the lock; database errors are returned without retry.
+// WithLockTimeout replaces the finite default advisory-lock polling timeout.
+// The override must remain positive, so callers cannot disable the bound.
+// Lock attempts repeat only while another session owns the lock; database
+// errors are returned without retry.
 func WithLockTimeout(timeout time.Duration) Option {
 	return func(backend *Backend) error {
 		if timeout <= 0 {
@@ -78,8 +137,10 @@ func WithLockTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithStatementTimeout applies PostgreSQL statement_timeout to each migration
-// transaction or explicit no-transaction execution session.
+// WithStatementTimeout replaces the finite default PostgreSQL statement_timeout
+// applied to each migration transaction or explicit no-transaction execution
+// session. The override must be at least one millisecond, so callers cannot
+// silently select PostgreSQL's unbounded zero value.
 func WithStatementTimeout(timeout time.Duration) Option {
 	return func(backend *Backend) error {
 		if timeout < time.Millisecond {
@@ -91,12 +152,27 @@ func WithStatementTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithOperationTimeout replaces the finite default deadline covering each
+// complete PostgreSQL session or schema-inspection operation. The override
+// must be at least one millisecond, so callers cannot disable the bound.
+func WithOperationTimeout(timeout time.Duration) Option {
+	return func(backend *Backend) error {
+		if timeout < time.Millisecond {
+			return ErrInvalidConfig
+		}
+		backend.operationTimeout = timeout
+
+		return nil
+	}
+}
+
 // Backend owns PostgreSQL preparation and creates connection-bound sessions.
 type Backend struct {
 	database          *sql.DB
 	lockRetryInterval time.Duration
 	lockTimeout       time.Duration
 	statementTimeout  time.Duration
+	operationTimeout  time.Duration
 }
 
 // New constructs the PostgreSQL backend without taking ownership of database.
@@ -108,6 +184,9 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 	backend := &Backend{
 		database:          database,
 		lockRetryInterval: defaultLockRetryInterval,
+		lockTimeout:       defaultLockTimeout,
+		statementTimeout:  defaultStatementTimeout,
+		operationTimeout:  defaultOperationTimeout,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -124,13 +203,16 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 // Prepare creates only the package-owned ledger on the advisory-lock
 // connection. It never reads or mutates Laravel's migrations table.
 func (session *session) Prepare(ctx context.Context) error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
 	}
-	if _, err := session.connection.ExecContext(ctx, createLedgerSQL); err != nil {
-		return fmt.Errorf("create go_schema_migrations: %w", err)
+	if _, err := session.connection.ExecContext(operationCtx, createLedgerSQL); err != nil {
+		return databaseContextFailure(operationCtx, "create migration ledger", err)
 	}
 
 	return nil
@@ -143,16 +225,12 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 		return nil, ErrInvalidConfig
 	}
 
-	acquireCtx := ctx
-	cancel := func() {}
-	if backend.lockTimeout > 0 {
-		acquireCtx, cancel = context.WithTimeout(ctx, backend.lockTimeout)
-	}
+	acquireCtx, cancel := context.WithTimeout(ctx, backend.lockTimeout)
 	defer cancel()
 
 	connection, err := backend.database.Conn(acquireCtx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire dedicated PostgreSQL connection: %w", err)
+		return nil, databaseContextFailure(acquireCtx, "acquire dedicated PostgreSQL connection", err)
 	}
 
 	for {
@@ -162,17 +240,19 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 			"SELECT pg_try_advisory_lock($1)",
 			advisoryLockKey,
 		).Scan(&acquired); err != nil {
-			_ = connection.Close()
+			_ = discardConnection(connection)
 			if contextErr := acquireCtx.Err(); contextErr != nil {
 				return nil, contextErr
 			}
 
-			return nil, fmt.Errorf("try PostgreSQL advisory lock: %w", err)
+			return nil, databaseFailure("try PostgreSQL advisory lock", err)
 		}
 		if acquired {
 			return &session{
 				connection:       connection,
 				statementTimeout: backend.statementTimeout,
+				operationTimeout: backend.operationTimeout,
+				gate:             newOperationGate(),
 			}, nil
 		}
 
@@ -189,27 +269,76 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 }
 
 type session struct {
-	mu               sync.Mutex
 	connection       *sql.Conn
 	statementTimeout time.Duration
+	operationTimeout time.Duration
+	gate             operationGate
 	released         bool
+	tainted          bool
+}
+
+type operationGate chan struct{}
+
+func newOperationGate() operationGate {
+	gate := make(operationGate, 1)
+	gate <- struct{}{}
+
+	return gate
+}
+
+func (gate operationGate) acquire(ctx context.Context) (func(), error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-gate:
+		return func() { gate <- struct{}{} }, nil
+	}
+}
+
+func (session *session) beginOperation(
+	ctx context.Context,
+) (context.Context, func(), error) {
+	operationCtx, cancel := boundedOperationContext(ctx, session.operationTimeout)
+	if session.gate == nil {
+		cancel()
+
+		return nil, nil, ErrSessionReleased
+	}
+	release, err := session.gate.acquire(operationCtx)
+	if err != nil {
+		cancel()
+
+		return nil, nil, err
+	}
+
+	return operationCtx, func() {
+		release()
+		cancel()
+	}, nil
 }
 
 func (session *session) Records(ctx context.Context) ([]migrations.Record, error) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return nil, ErrSessionReleased
 	}
 
-	rows, err := session.connection.QueryContext(ctx, "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.go_schema_migrations ORDER BY version ASC")
+	rows, err := session.connection.QueryContext(operationCtx, "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.go_schema_migrations ORDER BY version ASC")
 	if err != nil {
-		return nil, fmt.Errorf("query go_schema_migrations: %w", err)
+		return nil, databaseContextFailure(operationCtx, "query migration ledger", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	records := make([]migrations.Record, 0)
+	records := make([]migrations.Record, 0, min(MaxLedgerRecords, 128))
+	totalBytes := 0
 	for rows.Next() {
+		if len(records) >= MaxLedgerRecords {
+			return nil, ErrResourceLimit
+		}
 		var (
 			kindText   string
 			version    int64
@@ -230,7 +359,15 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 			&durationMS,
 			&dirty,
 		); err != nil {
-			return nil, fmt.Errorf("%w: scan ledger row: %w", migrations.ErrInvalidRecord, err)
+			return nil, databaseContextFailure(
+				operationCtx,
+				"scan migration ledger row",
+				errors.Join(migrations.ErrInvalidRecord, err),
+			)
+		}
+		totalBytes, err = boundedTextBytes(totalBytes, MaxLedgerBytes, kindText, name, encoded)
+		if err != nil {
+			return nil, err
 		}
 		if dirty == finishedAt.Valid {
 			return nil, migrations.ErrInvalidRecord
@@ -247,15 +384,37 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("query go_schema_migrations rows: %w", err)
+		return nil, databaseContextFailure(operationCtx, "iterate migration ledger rows", err)
 	}
 
 	return records, nil
 }
 
+func boundedTextBytes(total int, limit int, values ...string) (int, error) {
+	for _, value := range values {
+		if len(value) > limit-total {
+			return 0, ErrResourceLimit
+		}
+		total += len(value)
+	}
+
+	return total, nil
+}
+
+func boundedOperationContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout < time.Millisecond {
+		timeout = defaultOperationTimeout
+	}
+
+	return context.WithTimeout(ctx, timeout)
+}
+
 func (session *session) Apply(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return migrations.Record{}, err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return migrations.Record{}, ErrSessionReleased
 	}
@@ -267,15 +426,18 @@ func (session *session) Apply(ctx context.Context, migration migrations.Migratio
 
 	startedAt := time.Now().UTC()
 	if migration.TransactionMode() == migrations.TransactionModeDefault {
-		return session.applyTransaction(ctx, adapter, migration, startedAt)
+		return session.applyTransaction(operationCtx, adapter, migration, startedAt)
 	}
 
-	return session.applyWithoutTransaction(ctx, adapter, migration, startedAt)
+	return session.applyWithoutTransaction(operationCtx, adapter, migration, startedAt)
 }
 
 func (session *session) Rollback(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return migrations.Record{}, err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return migrations.Record{}, ErrSessionReleased
 	}
@@ -287,10 +449,10 @@ func (session *session) Rollback(ctx context.Context, migration migrations.Migra
 		return migrations.Record{}, migrations.ErrIrreversible
 	}
 	if migration.TransactionMode() == migrations.TransactionModeDefault {
-		return session.rollbackTransaction(ctx, adapter, migration)
+		return session.rollbackTransaction(operationCtx, adapter, migration)
 	}
 
-	return session.rollbackWithoutTransaction(ctx, adapter, migration)
+	return session.rollbackWithoutTransaction(operationCtx, adapter, migration)
 }
 
 // Recover persists an explicit operator-reviewed dirty outcome atomically.
@@ -299,8 +461,11 @@ func (session *session) Recover(
 	migration migrations.Migration,
 	action migrations.RecoveryAction,
 ) (migrations.Record, error) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return migrations.Record{}, err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return migrations.Record{}, ErrSessionReleased
 	}
@@ -308,21 +473,25 @@ func (session *session) Recover(
 	switch action {
 	case migrations.RecoveryMarkApplied:
 		finishedAt := time.Now().UTC()
-		var startedAt time.Time
+		var durationMS int64
 		err := session.connection.QueryRowContext(
-			ctx,
-			`UPDATE public.go_schema_migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true RETURNING started_at`,
+			operationCtx,
+			`UPDATE public.go_schema_migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`,
 			finishedAt,
-			int64(migration.Version()),
+			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
-		).Scan(&startedAt)
+			maximumDurationMilliseconds,
+		).Scan(&durationMS)
 		if errors.Is(err, sql.ErrNoRows) {
 			return migrations.Record{}, migrations.ErrNoDirtyMigration
 		}
 		if err != nil {
-			return migrations.Record{}, fmt.Errorf("mark dirty migration applied: %w", err)
+			return migrations.Record{}, databaseContextFailure(operationCtx, "mark dirty migration applied", err)
 		}
-		duration := max(finishedAt.Sub(startedAt).Truncate(time.Millisecond), 0)
+		duration, err := durationFromMilliseconds(durationMS)
+		if err != nil {
+			return migrations.Record{}, err
+		}
 
 		return migrations.NewRecord(
 			migrations.RecordKindMigration,
@@ -337,16 +506,22 @@ func (session *session) Recover(
 		var startedAt time.Time
 		var durationMS int64
 		err := session.connection.QueryRowContext(
-			ctx,
-			`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = true RETURNING started_at, execution_time_ms`,
-			int64(migration.Version()),
+			operationCtx,
+			`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
+			maximumDurationMilliseconds,
 		).Scan(&startedAt, &durationMS)
 		if errors.Is(err, sql.ErrNoRows) {
 			return migrations.Record{}, migrations.ErrNoDirtyMigration
 		}
 		if err != nil {
-			return migrations.Record{}, fmt.Errorf("remove rolled-back dirty migration: %w", err)
+			return migrations.Record{}, databaseContextFailure(operationCtx, "remove rolled-back dirty migration", err)
+		}
+
+		duration, err := durationFromMilliseconds(durationMS)
+		if err != nil {
+			return migrations.Record{}, err
 		}
 
 		return migrations.NewRecord(
@@ -355,7 +530,7 @@ func (session *session) Recover(
 			migration.Name(),
 			migration.Checksum(),
 			startedAt,
-			time.Duration(durationMS)*time.Millisecond,
+			duration,
 			true,
 		)
 	default:
@@ -370,7 +545,7 @@ func (session *session) rollbackTransaction(
 ) (migrations.Record, error) {
 	transaction, err := session.connection.BeginTx(ctx, nil)
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("begin rollback transaction: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "begin rollback transaction", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
@@ -385,7 +560,7 @@ func (session *session) rollbackTransaction(
 		return migrations.Record{}, err
 	}
 	if err := transaction.Commit(); err != nil {
-		return migrations.Record{}, fmt.Errorf("commit rollback transaction: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "commit rollback transaction", err)
 	}
 
 	return record, nil
@@ -396,16 +571,13 @@ func setLocalStatementTimeout(
 	transaction *sql.Tx,
 	timeout time.Duration,
 ) error {
-	if timeout == 0 {
-		return nil
-	}
 	_, err := transaction.ExecContext(
 		ctx,
 		"SELECT set_config('statement_timeout', $1, true)",
 		strconv.FormatInt(timeout.Milliseconds(), 10)+"ms",
 	)
 	if err != nil {
-		return fmt.Errorf("set local migration statement timeout: %w", err)
+		return databaseContextFailure(ctx, "set local migration statement timeout", err)
 	}
 
 	return nil
@@ -427,15 +599,20 @@ func (session *session) rollbackWithoutTransaction(
 	var durationMS int64
 	err = session.connection.QueryRowContext(
 		ctx,
-		`UPDATE public.go_schema_migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING started_at, execution_time_ms`,
-		int64(migration.Version()),
+		`UPDATE public.go_schema_migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
+		maximumDurationMilliseconds,
 	).Scan(&appliedAt, &durationMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return migrations.Record{}, ErrLedgerConflict
 	}
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("mark rollback dirty: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "mark rollback dirty", err)
+	}
+	duration, err := durationFromMilliseconds(durationMS)
+	if err != nil {
+		return migrations.Record{}, err
 	}
 	if err := adapter.RollbackConn(ctx, session.connection); err != nil {
 		return migrations.Record{}, err
@@ -443,15 +620,15 @@ func (session *session) rollbackWithoutTransaction(
 	result, err := session.connection.ExecContext(
 		ctx,
 		`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = true`,
-		int64(migration.Version()),
+		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	)
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("delete rolled-back migration record: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "delete rolled-back migration record", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("delete rolled-back migration result: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "read rolled-back migration result", err)
 	}
 	if rows != 1 {
 		return migrations.Record{}, ErrLedgerConflict
@@ -463,7 +640,7 @@ func (session *session) rollbackWithoutTransaction(
 		migration.Name(),
 		migration.Checksum(),
 		appliedAt,
-		time.Duration(durationMS)*time.Millisecond,
+		duration,
 		false,
 	)
 }
@@ -476,7 +653,7 @@ func (session *session) applyTransaction(
 ) (migrations.Record, error) {
 	transaction, err := session.connection.BeginTx(ctx, nil)
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("begin migration transaction: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "begin migration transaction", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
@@ -496,7 +673,7 @@ func (session *session) applyTransaction(
 		return migrations.Record{}, err
 	}
 	if err := transaction.Commit(); err != nil {
-		return migrations.Record{}, fmt.Errorf("commit migration transaction: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "commit migration transaction", err)
 	}
 
 	return migrations.NewRecord(
@@ -557,7 +734,9 @@ func (session *session) setSessionStatementTimeout(ctx context.Context) error {
 		strconv.FormatInt(session.statementTimeout.Milliseconds(), 10)+"ms",
 	)
 	if err != nil {
-		return fmt.Errorf("set migration session statement timeout: %w", err)
+		// The server may have changed session policy before its reply failed.
+		session.tainted = true
+		return databaseContextFailure(ctx, "set migration session statement timeout", err)
 	}
 
 	return nil
@@ -574,9 +753,10 @@ func (session *session) resetSessionStatementTimeout(ctx context.Context) error 
 	defer cancel()
 	if _, err := session.connection.ExecContext(
 		resetCtx,
-		"SELECT set_config('statement_timeout', '0', false)",
+		"RESET statement_timeout",
 	); err != nil {
-		return fmt.Errorf("reset migration session statement timeout: %w", err)
+		session.tainted = true
+		return databaseContextFailure(resetCtx, "restore migration session statement timeout", err)
 	}
 
 	return nil
@@ -595,14 +775,14 @@ func insertDirty(
 	_, err := execer.ExecContext(
 		ctx,
 		`INSERT INTO public.go_schema_migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`,
-		int64(migration.Version()),
+		migrationLedgerVersion(migration),
 		"migration",
 		migration.Name(),
 		migration.Checksum().String(),
 		startedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("insert dirty migration record: %w", err)
+		return databaseContextFailure(ctx, "insert dirty migration record", err)
 	}
 
 	return nil
@@ -620,15 +800,15 @@ func markClean(
 		`UPDATE public.go_schema_migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`,
 		finishedAt,
 		duration.Milliseconds(),
-		int64(migration.Version()),
+		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	)
 	if err != nil {
-		return fmt.Errorf("complete migration record: %w", err)
+		return databaseContextFailure(ctx, "complete migration record", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("complete migration record result: %w", err)
+		return databaseContextFailure(ctx, "read completed migration result", err)
 	}
 	if rows != 1 {
 		return ErrLedgerConflict
@@ -649,14 +829,18 @@ func deleteRecord(
 	err := queryer.QueryRowContext(
 		ctx,
 		`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`,
-		int64(migration.Version()),
+		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	).Scan(&appliedAt, &durationMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return migrations.Record{}, ErrLedgerConflict
 	}
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("delete rolled-back migration record: %w", err)
+		return migrations.Record{}, databaseContextFailure(ctx, "delete rolled-back migration record", err)
+	}
+	duration, err := durationFromMilliseconds(durationMS)
+	if err != nil {
+		return migrations.Record{}, err
 	}
 
 	return migrations.NewRecord(
@@ -665,7 +849,7 @@ func deleteRecord(
 		migration.Name(),
 		migration.Checksum(),
 		appliedAt,
-		time.Duration(durationMS)*time.Millisecond,
+		duration,
 		false,
 	)
 }
@@ -691,10 +875,8 @@ func decodeRecord(
 	if version < 1 {
 		return migrations.Record{}, migrations.ErrInvalidRecord
 	}
-	if durationMS < 0 {
-		return migrations.Record{}, migrations.ErrInvalidRecord
-	}
-	if durationMS > math.MaxInt64/int64(time.Millisecond) {
+	duration, err := durationFromMilliseconds(durationMS)
+	if err != nil {
 		return migrations.Record{}, migrations.ErrInvalidRecord
 	}
 	checksum, err := migrations.ParseChecksum(encoded)
@@ -707,7 +889,7 @@ func decodeRecord(
 		name,
 		checksum,
 		finishedAt,
-		time.Duration(durationMS)*time.Millisecond,
+		duration,
 		dirty,
 	)
 	if err != nil {
@@ -717,28 +899,70 @@ func decodeRecord(
 	return record, nil
 }
 
+func durationFromMilliseconds(durationMS int64) (time.Duration, error) {
+	if durationMS < 0 || durationMS > maximumDurationMilliseconds {
+		return 0, migrations.ErrInvalidRecord
+	}
+
+	return time.Duration(durationMS) * time.Millisecond, nil
+}
+
+func migrationLedgerVersion(migration migrations.Migration) int64 {
+	// #nosec G115 -- Migration has private fields and NewMigration rejects
+	// versions above math.MaxInt64 before PostgreSQL persistence can receive one.
+	return int64(migration.Version())
+}
+
 func (session *session) Release(ctx context.Context) error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
 	}
 
 	var unlocked bool
 	queryErr := session.connection.QueryRowContext(
-		ctx,
+		operationCtx,
 		"SELECT pg_advisory_unlock($1)",
 		advisoryLockKey,
 	).Scan(&unlocked)
-	closeErr := session.connection.Close()
+	var closeErr error
+	if queryErr != nil || session.tainted {
+		closeErr = discardConnection(session.connection)
+	} else {
+		closeErr = session.connection.Close()
+	}
 	session.released = true
 	session.connection = nil
 	if queryErr != nil {
-		return errors.Join(fmt.Errorf("release PostgreSQL advisory lock: %w", queryErr), closeErr)
+		return errors.Join(
+			databaseContextFailure(operationCtx, "release PostgreSQL advisory lock", queryErr),
+			databaseFailure("close PostgreSQL migration connection", closeErr),
+		)
 	}
 	if !unlocked {
-		return errors.Join(ErrLockNotHeld, closeErr)
+		return errors.Join(
+			ErrLockNotHeld,
+			databaseFailure("close PostgreSQL migration connection", closeErr),
+		)
 	}
 
-	return closeErr
+	return databaseFailure("close PostgreSQL migration connection", closeErr)
+}
+
+// A failed lock query cannot establish the server's lock state. Close alone
+// returns the physical session to the pool; ErrBadConn makes sql discard it.
+func discardConnection(connection *sql.Conn) error {
+	err := connection.Raw(func(any) error { return driver.ErrBadConn })
+	closeErr := connection.Close()
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
+		err = nil
+	}
+	if errors.Is(closeErr, sql.ErrConnDone) {
+		closeErr = nil
+	}
+	return errors.Join(err, closeErr)
 }

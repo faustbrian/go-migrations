@@ -5,15 +5,39 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 	pressly "github.com/pressly/goose/v3"
 )
 
 // ErrUnsupportedMigration indicates a canonical migration the hidden adapter
 // cannot safely represent.
 var ErrUnsupportedMigration = errors.New("migration is unsupported by execution adapter")
+
+type executionError struct {
+	classification error
+}
+
+func (*executionError) Error() string { return migrations.ErrExecutionFailed.Error() }
+
+func (err *executionError) Unwrap() []error {
+	if err.classification == nil {
+		return []error{migrations.ErrExecutionFailed}
+	}
+
+	return []error{migrations.ErrExecutionFailed, err.classification}
+}
+
+func redactExecutionError(cause error) error {
+	switch {
+	case errors.Is(cause, context.Canceled):
+		return &executionError{classification: context.Canceled}
+	case errors.Is(cause, context.DeadlineExceeded):
+		return &executionError{classification: context.DeadlineExceeded}
+	default:
+		return &executionError{}
+	}
+}
 
 // Adapter contains a Goose migration without exposing Goose from this internal
 // package.
@@ -59,7 +83,7 @@ func Compile(migration migrations.Migration) (*Adapter, error) {
 		}
 	}
 
-	compiled := pressly.NewGoMigration(int64(migration.Version()), up, down)
+	compiled := pressly.NewGoMigration(gooseVersion(migration), up, down)
 
 	return &Adapter{
 		migration: compiled,
@@ -67,6 +91,12 @@ func Compile(migration migrations.Migration) (*Adapter, error) {
 		downSQL:   migration.DownSQL(),
 		mode:      migration.TransactionMode(),
 	}, nil
+}
+
+func gooseVersion(migration migrations.Migration) int64 {
+	// #nosec G115 -- Migration has private fields and NewMigration rejects
+	// versions above math.MaxInt64 before this internal adapter can receive one.
+	return int64(migration.Version())
 }
 
 // RollbackTx executes transactional down SQL through Goose's hidden function.
@@ -78,7 +108,7 @@ func (adapter *Adapter) RollbackTx(ctx context.Context, tx *sql.Tx) error {
 	}
 
 	if err := adapter.migration.DownFnContext(ctx, tx); err != nil {
-		return fmt.Errorf("execute transactional down SQL: %w", err)
+		return redactExecutionError(err)
 	}
 
 	return nil
@@ -94,7 +124,7 @@ func (adapter *Adapter) ApplyTx(ctx context.Context, tx *sql.Tx) error {
 	}
 
 	if err := adapter.migration.UpFnContext(ctx, tx); err != nil {
-		return fmt.Errorf("execute transactional up SQL: %w", err)
+		return redactExecutionError(err)
 	}
 
 	return nil
@@ -110,7 +140,7 @@ func (adapter *Adapter) ApplyConn(ctx context.Context, connection *sql.Conn) err
 	}
 
 	if _, err := connection.ExecContext(ctx, adapter.upSQL); err != nil {
-		return fmt.Errorf("execute no-transaction up SQL: %w", err)
+		return redactExecutionError(err)
 	}
 
 	return nil
@@ -125,7 +155,7 @@ func (adapter *Adapter) RollbackConn(ctx context.Context, connection *sql.Conn) 
 	}
 
 	if _, err := connection.ExecContext(ctx, adapter.downSQL); err != nil {
-		return fmt.Errorf("execute no-transaction down SQL: %w", err)
+		return redactExecutionError(err)
 	}
 
 	return nil

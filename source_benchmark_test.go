@@ -36,7 +36,7 @@ func BenchmarkParseMigrationFile(b *testing.B) {
 func BenchmarkFSSourceLoad(b *testing.B) {
 	for _, count := range []int{100, 1000} {
 		files, totalBytes := benchmarkMigrationFS(count, 2<<10)
-		source, err := NewFSSource(files, "migrations")
+		source, err := NewFSSource(mapSourceFileSystem{files: files}, "migrations")
 		if err != nil {
 			b.Fatal(err)
 		}
