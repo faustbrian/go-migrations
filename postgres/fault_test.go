@@ -49,6 +49,22 @@ func TestPostgresOwnershipBoundaries(t *testing.T) {
 	}) {
 		return
 	}
+	if !t.Run("canceled contention does not start an operation", func(t *testing.T) {
+		gate := newOperationGate()
+		release, err := gate.acquire(context.Background())
+		if err != nil {
+			t.Fatalf("acquire gate: %v", err)
+		}
+		defer release()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		operationCtx, finish, err := (&session{gate: gate}).beginOperation(ctx)
+		if !errors.Is(err, context.Canceled) || operationCtx != nil || finish != nil {
+			t.Fatalf("beginOperation(canceled contention) = context %v, finish %t, error %v; want canceled rejection", operationCtx, finish != nil, err)
+		}
+	}) {
+		return
+	}
 	if !t.Run("release relinquishes connection", func(t *testing.T) {
 		owned, mock := faultSession(t, 0)
 		mock.ExpectQuery("SELECT pg_advisory_unlock").WillReturnRows(
