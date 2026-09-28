@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations"
-	"github.com/faustbrian/go-migrations/postgres"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	"github.com/faustbrian/go-migrations/v2/postgres"
 )
 
 func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
@@ -34,6 +35,35 @@ func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
 
 	if err := session.Prepare(context.Background()); err != nil {
 		t.Fatalf("Prepare() error = %v", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestSessionOperationTimeoutCancelsLedgerPreparation(t *testing.T) {
+	t.Parallel()
+
+	database, mock := newMockDatabase(t)
+	backend, err := postgres.New(database, postgres.WithOperationTimeout(time.Millisecond))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+	session, err := backend.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.go_schema_migrations")).
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	startedAt := time.Now()
+	if err := session.Prepare(context.Background()); !errors.Is(err, postgres.ErrDatabaseOperationFailed) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Prepare() error = %v, want database failure and context deadline", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 100*time.Millisecond {
+		t.Fatalf("Prepare() elapsed = %v, want bounded cancellation", elapsed)
 	}
 	assertExpectations(t, mock)
 }
@@ -100,6 +130,9 @@ func TestSessionAppliesTransactionalMigrationAtomically(t *testing.T) {
 	migration := newMigration(t, migrations.TransactionModeDefault)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
+		WithArgs("300000ms").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO public.go_schema_migrations.*'postgres'.*'v1'").
 		WithArgs(
 			int64(1),
@@ -157,6 +190,37 @@ func TestSessionSetsTransactionLocalStatementTimeout(t *testing.T) {
 	assertExpectations(t, mock)
 }
 
+func TestSessionAppliesDefaultStatementTimeout(t *testing.T) {
+	t.Parallel()
+
+	database, mock := newMockDatabase(t)
+	backend, err := postgres.New(database)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+	session, err := backend.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	migration := newMigration(t, migrations.TransactionModeDefault)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
+		WithArgs("300000ms").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if _, err := session.Apply(context.Background(), migration); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	assertExpectations(t, mock)
+}
+
 func TestSessionLeavesNoTransactionMigrationDirtyAfterFailure(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +229,9 @@ func TestSessionLeavesNoTransactionMigrationDirtyAfterFailure(t *testing.T) {
 	migration := newMigration(t, migrations.TransactionModeNone)
 	executionError := errors.New("index build lost connection")
 
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, false)")).
+		WithArgs("300000ms").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO public.go_schema_migrations").
 		WithArgs(
 			int64(1),
@@ -175,10 +242,15 @@ func TestSessionLeavesNoTransactionMigrationDirtyAfterFailure(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(executionError)
+	mock.ExpectExec(regexp.QuoteMeta("RESET statement_timeout")).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	_, err := session.Apply(context.Background(), migration)
-	if !errors.Is(err, executionError) {
-		t.Fatalf("Apply() error = %v, want execution error", err)
+	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, executionError) {
+		t.Fatalf("Apply() error = %v, want redacted execution error", err)
+	}
+	if strings.Contains(err.Error(), executionError.Error()) {
+		t.Fatalf("Apply() disclosed execution detail: %q", err)
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "goose") {
 		t.Fatalf("Apply() leaked adapter identity: %v", err)
@@ -186,7 +258,7 @@ func TestSessionLeavesNoTransactionMigrationDirtyAfterFailure(t *testing.T) {
 	assertExpectations(t, mock)
 }
 
-func TestNoTransactionStatementTimeoutIsResetAfterFailure(t *testing.T) {
+func TestNoTransactionStatementTimeoutRestoresDatabasePolicyAfterFailure(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
@@ -208,12 +280,12 @@ func TestNoTransactionStatementTimeoutIsResetAfterFailure(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(executionError)
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', '0', false)")).
+	mock.ExpectExec(regexp.QuoteMeta("RESET statement_timeout")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	_, err = session.Apply(context.Background(), migration)
-	if !errors.Is(err, executionError) {
-		t.Fatalf("Apply() error = %v, want execution error", err)
+	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, executionError) {
+		t.Fatalf("Apply() error = %v, want redacted execution error", err)
 	}
 	assertExpectations(t, mock)
 }
@@ -227,6 +299,9 @@ func TestSessionRollsBackTransactionalMigrationAtomically(t *testing.T) {
 	finishedAt := time.Unix(1_700_000_000, 0).UTC()
 
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
+		WithArgs("300000ms").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("DELETE FROM public.go_schema_migrations").
@@ -282,6 +357,59 @@ func TestSessionRejectsMalformedLedgerRows(t *testing.T) {
 		t.Fatalf("Records() error = %v, want ErrInvalidRecord", err)
 	}
 	assertExpectations(t, mock)
+}
+
+func TestSessionRejectsLedgerBeyondResourceLimits(t *testing.T) {
+	t.Parallel()
+
+	database, mock := newMockDatabase(t)
+	session := acquireSession(t, database, mock)
+	rows := sqlmock.NewRows([]string{
+		"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty",
+	})
+	appliedAt := time.Now().UTC()
+	migration := newMigration(t, migrations.TransactionModeDefault)
+	for index := 1; index <= postgres.MaxLedgerRecords+1; index++ {
+		rows.AddRow("migration", index, "migration", migration.Checksum().String(), appliedAt, appliedAt, 1, false)
+	}
+	mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations").WillReturnRows(rows)
+
+	if _, err := session.Records(context.Background()); !errors.Is(err, postgres.ErrResourceLimit) {
+		t.Fatalf("Records() error = %v, want ErrResourceLimit", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestSchemaInspectionRejectsCatalogBeyondResourceLimits(t *testing.T) {
+	t.Parallel()
+
+	database, mock := newMockDatabase(t)
+	backend, err := postgres.New(database)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	rows := sqlmock.NewRows([]string{"object_identity", "definition"})
+	for index := 0; index <= postgres.MaxSchemaObjects; index++ {
+		rows.AddRow("table:object_"+strconv.Itoa(index), "definition")
+	}
+	mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").WillReturnRows(rows)
+
+	if _, err := backend.InspectObjects(context.Background()); !errors.Is(err, postgres.ErrResourceLimit) {
+		t.Fatalf("InspectObjects() error = %v, want ErrResourceLimit", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestFingerprintRejectsOversizedSchemaObjectBeforeCanonicalization(t *testing.T) {
+	t.Parallel()
+
+	objects := []postgres.SchemaObject{{
+		Identity:   "table:public.large",
+		Definition: strings.Repeat("x", postgres.MaxSchemaObjectDefinitionBytes+1),
+	}}
+	if _, err := postgres.Fingerprint(objects); !errors.Is(err, postgres.ErrResourceLimit) {
+		t.Fatalf("Fingerprint() error = %v, want ErrResourceLimit", err)
+	}
 }
 
 func TestSessionRejectsInconsistentLedgerCompletionState(t *testing.T) {
@@ -408,10 +536,9 @@ func TestSessionResolvesDirtyMigrationWithoutManualLedgerEdit(t *testing.T) {
 	if !ok {
 		t.Fatal("PostgreSQL session does not implement recovery contract")
 	}
-	startedAt := time.Now().UTC().Add(-time.Second)
 	mock.ExpectQuery("UPDATE public.go_schema_migrations").
-		WithArgs(sqlmock.AnyArg(), int64(1), migration.Checksum().String()).
-		WillReturnRows(sqlmock.NewRows([]string{"started_at"}).AddRow(startedAt))
+		WithArgs(sqlmock.AnyArg(), int64(1), migration.Checksum().String(), int64(9223372036854)).
+		WillReturnRows(sqlmock.NewRows([]string{"execution_time_ms"}).AddRow(int64(1000)))
 
 	record, err := capable.Recover(
 		context.Background(),
@@ -447,6 +574,15 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(time.Millisecond)); err != nil {
 		t.Fatalf("New(minimum statement timeout) error = %v", err)
+	}
+	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
+		t.Fatalf("New(operation timeout) error = %v, want ErrInvalidConfig", err)
+	}
+	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
+		t.Fatalf("New(sub-millisecond operation timeout) error = %v, want ErrInvalidConfig", err)
+	}
+	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(time.Millisecond)); err != nil {
+		t.Fatalf("New(minimum operation timeout) error = %v", err)
 	}
 }
 

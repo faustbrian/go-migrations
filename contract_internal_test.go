@@ -3,6 +3,7 @@ package migrations
 import (
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
@@ -35,6 +36,7 @@ func TestRecordRejectsEveryMalformedLedgerField(t *testing.T) {
 	}{
 		{name: "kind", kind: 99, version: 1, recordName: "valid", checksum: checksum, appliedAt: now},
 		{name: "version", kind: RecordKindMigration, recordName: "valid", checksum: checksum, appliedAt: now},
+		{name: "version exceeds ledger", kind: RecordKindMigration, version: Version(math.MaxInt64) + 1, recordName: "valid", checksum: checksum, appliedAt: now},
 		{name: "name", kind: RecordKindMigration, version: 1, recordName: "Not Valid", checksum: checksum, appliedAt: now},
 		{name: "checksum", kind: RecordKindMigration, version: 1, recordName: "valid", appliedAt: now},
 		{name: "applied at", kind: RecordKindMigration, version: 1, recordName: "valid", checksum: checksum},

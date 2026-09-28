@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 func FuzzFSSource(f *testing.F) {
@@ -20,9 +20,9 @@ func FuzzFSSource(f *testing.F) {
 			!fs.ValidPath("migrations/"+filename) {
 			return
 		}
-		source, err := migrations.NewFSSource(fstest.MapFS{
+		source, err := migrations.NewFSSource(testSourceFileSystem{files: fstest.MapFS{
 			"migrations/" + filename: &fstest.MapFile{Data: []byte(contents)},
-		}, "migrations")
+		}}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}

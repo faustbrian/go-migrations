@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 type compatibilityManifest struct {
@@ -47,7 +47,7 @@ func TestV1CompatibilityCorpusPreservesCanonicalIdentity(t *testing.T) {
 		t.Fatal("compatibility ledger contains replaceable adapter identity")
 	}
 
-	source, err := migrations.NewFSSource(os.DirFS(root), "migrations")
+	source, err := migrations.NewFSSource(testSourceFileSystem{files: os.DirFS(root)}, "migrations")
 	if err != nil {
 		t.Fatalf("NewFSSource() error = %v", err)
 	}

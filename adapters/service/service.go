@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 	service "github.com/faustbrian/go-service"
 )
 

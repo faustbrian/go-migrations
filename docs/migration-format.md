@@ -2,14 +2,20 @@
 
 ## Canonical SQL files
 
-Files live in one `fs.FS` directory and use
+Files supplied by `SourceFileSystem` use
 `<positive-version>_<snake_case_name>.sql`. The directory must contain only
 migration files. Versions are numeric identities; zero, duplicates, invalid
 UTF-8, NUL bytes, byte-order marks, files over 16 MiB, and unknown directives
-are rejected. `NewMigration` applies the same UTF-8, NUL, and aggregate SQL size
-rules when applications construct a migration without `FSSource`. Versions
-must fit a positive signed 64-bit integer so every accepted identity is
-representable in the owned PostgreSQL `bigint` ledger.
+are rejected. The source root is at most 4 KiB, and canonical names are at most
+255 bytes. One source load accepts at most 4,096 entries, 1 MiB of aggregate
+filename data, and 16 MiB of aggregate migration-file content. The provider
+must enforce the supplied limits before retaining or returning data, and the
+package revalidates every result. A complete source load defaults to ten
+minutes; `WithSourceTimeout` accepts only a positive override.
+`NewMigration` applies the same name, UTF-8, NUL, and aggregate SQL size rules
+when applications construct a migration without `FSSource`. Versions must fit
+a positive signed 64-bit integer so every accepted identity is representable in
+the owned PostgreSQL `bigint` ledger.
 
 ```sql
 -- +migrations Up
@@ -72,5 +78,8 @@ Checksums are lowercase algorithm-qualified SHA-256 values; the all-zero value
 is reserved as the invalid/uninitialized sentinel and is rejected when parsed.
 Ledger reads also reject any dirty row with a completion time or clean row
 without one, independently of database constraints.
+The public planner, status builder, `Source`, and `Session` contracts reject
+more than 4,096 migrations or 4,097 ledger records before proportional
+allocation, including results from custom implementations.
 Migration rows persist `postgres` / `v1`, not the replaceable adapter name or
 version. Adapter upgrades therefore do not rewrite or redefine ledger history.

@@ -5,8 +5,8 @@ the migration runtime:
 
 - canonical migration parsing at 1 KiB and 1 MiB;
 - filesystem source loading at 100 and 1,000 migrations;
-- planning and status construction at 100 and 10,000 migrations, with 75% of
-  the history applied; and
+- planning and status construction at 100 and the maximum accepted 4,096
+  migrations, with 75% of the history applied; and
 - PostgreSQL schema fingerprinting at 100 and 10,000 unsorted catalog objects.
 
 Run the complete benchmark suite with memory statistics:
@@ -31,6 +31,9 @@ fixtures remain valid and the benchmark paths compile and execute. It does not
 enforce absolute latency or allocation thresholds because shared CI runner noise
 would make those thresholds unreliable. Performance changes should instead be
 reviewed with statistically significant `benchstat` output from a stable host.
+The revisions being compared must emit the same benchmark names and use the
+same accepted history limit. The historical 10,000-migration results below
+cannot be compared directly with the current 4,096-migration case.
 
 ## Reference baseline
 
@@ -38,6 +41,11 @@ The following values are the median of three runs on 2026-07-15 from the initial
 hardening baseline. The host used Go 1.26.5 on macOS 27.0, arm64, with an Apple
 M4 Max CPU. They provide a review reference, not a cross-host performance
 contract.
+
+The 10,000-migration planning and status rows predate the 4,096-migration
+security limit. They are retained as historical results, not a baseline for
+the current bounded workload. A new 4,096-migration reference requires
+repeated measurements on a stable host with the current toolchain.
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |

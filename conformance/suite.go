@@ -5,11 +5,12 @@ package conformance
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"sync"
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 // Harness supplies engine-specific SQL and isolated runner construction.
@@ -230,7 +231,7 @@ func Run(t *testing.T, harness Harness) {
 			t.Fatalf("Status() = %#v, want dirty", status.Entries())
 		}
 		harness.Exec(t, harness.RemovePartialEffects)
-		source, err := migrations.NewFSSource(files, "migrations")
+		source, err := migrations.NewFSSource(sourceFileSystem{files: files}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}
@@ -250,6 +251,58 @@ func Run(t *testing.T, harness Harness) {
 			t.Fatalf("Recover() error = %v", err)
 		}
 	})
+}
+
+type sourceFileSystem struct {
+	files fs.FS
+}
+
+func (filesystem sourceFileSystem) ReadDir(
+	ctx context.Context,
+	root string,
+	limits migrations.SourceDirectoryLimits,
+) ([]migrations.SourceEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(filesystem.files, root)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > limits.MaxEntries {
+		return nil, migrations.ErrSourceLimit
+	}
+	converted := make([]migrations.SourceEntry, 0, len(entries))
+	totalNameBytes := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) > limits.MaxNameBytes || len(name) > limits.MaxTotalNameBytes-totalNameBytes {
+			return nil, migrations.ErrSourceLimit
+		}
+		totalNameBytes += len(name)
+		converted = append(converted, migrations.SourceEntry{Name: name, Directory: entry.IsDir()})
+	}
+
+	return converted, ctx.Err()
+}
+
+func (filesystem sourceFileSystem) ReadFile(
+	ctx context.Context,
+	name string,
+	maxBytes int,
+) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	contents, err := fs.ReadFile(filesystem.files, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maxBytes {
+		return nil, migrations.ErrInvalidEncoding
+	}
+
+	return contents, ctx.Err()
 }
 
 func assertHistoryError(t *testing.T, target error, operation func() error) {

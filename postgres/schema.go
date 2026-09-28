@@ -11,12 +11,24 @@ import (
 	"strings"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 // ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a
 // reviewed baseline contract.
 var ErrInvalidSchemaSnapshot = errors.New("invalid PostgreSQL schema snapshot")
+
+const (
+	// MaxSchemaObjects bounds the number of catalog entries in one snapshot.
+	MaxSchemaObjects = 10_000
+	// MaxSchemaObjectIdentityBytes bounds one canonical catalog identity.
+	MaxSchemaObjectIdentityBytes = 4 << 10
+	// MaxSchemaObjectDefinitionBytes bounds one canonical catalog definition.
+	MaxSchemaObjectDefinitionBytes = 1 << 20
+	// MaxSchemaSnapshotBytes bounds aggregate identities and definitions in one
+	// retained snapshot.
+	MaxSchemaSnapshotBytes = 16 << 20
+)
 
 // SchemaObject is one canonical PostgreSQL catalog identity and definition.
 // Objects are sorted during fingerprinting, so database row order is irrelevant.
@@ -136,6 +148,17 @@ ORDER BY object_identity, definition`
 
 // Fingerprint hashes a complete, unambiguous PostgreSQL schema snapshot.
 func Fingerprint(objects []SchemaObject) (migrations.Checksum, error) {
+	if len(objects) > MaxSchemaObjects {
+		return migrations.Checksum{}, ErrResourceLimit
+	}
+	totalBytes := 0
+	for _, object := range objects {
+		var err error
+		totalBytes, err = validateSchemaObjectBounds(totalBytes, object)
+		if err != nil {
+			return migrations.Checksum{}, err
+		}
+	}
 	canonical := append([]SchemaObject(nil), objects...)
 	slices.SortFunc(canonical, func(left, right SchemaObject) int {
 		if identityOrder := cmp.Compare(left.Identity, right.Identity); identityOrder != 0 {
@@ -174,13 +197,15 @@ func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error
 		return migrations.Checksum{}, ErrInvalidConfig
 	}
 
-	connection, err := backend.database.Conn(ctx)
+	operationCtx, cancel := boundedOperationContext(ctx, backend.operationTimeout)
+	defer cancel()
+	connection, err := backend.database.Conn(operationCtx)
 	if err != nil {
-		return migrations.Checksum{}, fmt.Errorf("acquire schema inspection connection: %w", err)
+		return migrations.Checksum{}, databaseContextFailure(operationCtx, "acquire schema inspection connection", err)
 	}
 	defer func() { _ = connection.Close() }()
 
-	return inspectSchema(ctx, connection)
+	return inspectSchema(operationCtx, connection)
 }
 
 // InspectObjects returns the canonical catalog objects used for review and
@@ -190,29 +215,34 @@ func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, err
 		return nil, ErrInvalidConfig
 	}
 
-	connection, err := backend.database.Conn(ctx)
+	operationCtx, cancel := boundedOperationContext(ctx, backend.operationTimeout)
+	defer cancel()
+	connection, err := backend.database.Conn(operationCtx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire schema inspection connection: %w", err)
+		return nil, databaseContextFailure(operationCtx, "acquire schema inspection connection", err)
 	}
 	defer func() { _ = connection.Close() }()
 
-	return inspectObjects(ctx, connection)
+	return inspectObjects(operationCtx, connection)
 }
 
 func (session *session) Baseline(ctx context.Context, baseline migrations.Baseline) (migrations.Record, error) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
+	operationCtx, finish, err := session.beginOperation(ctx)
+	if err != nil {
+		return migrations.Record{}, err
+	}
+	defer finish()
 	if session.released || session.connection == nil {
 		return migrations.Record{}, ErrSessionReleased
 	}
 
-	transaction, err := session.connection.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	transaction, err := session.connection.BeginTx(operationCtx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("begin baseline transaction: %w", err)
+		return migrations.Record{}, databaseContextFailure(operationCtx, "begin baseline transaction", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 
-	fingerprint, err := inspectSchema(ctx, transaction)
+	fingerprint, err := inspectSchema(operationCtx, transaction)
 	if err != nil {
 		return migrations.Record{}, err
 	}
@@ -227,19 +257,19 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 
 	appliedAt := time.Now().UTC()
 	_, err = transaction.ExecContext(
-		ctx,
+		operationCtx,
 		`INSERT INTO public.go_schema_migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`,
-		int64(baseline.Version()),
+		baselineLedgerVersion(baseline),
 		"baseline",
 		baseline.Name(),
 		baseline.Fingerprint().String(),
 		appliedAt,
 	)
 	if err != nil {
-		return migrations.Record{}, fmt.Errorf("insert schema baseline: %w", err)
+		return migrations.Record{}, databaseContextFailure(operationCtx, "insert schema baseline", err)
 	}
 	if err := transaction.Commit(); err != nil {
-		return migrations.Record{}, fmt.Errorf("commit schema baseline: %w", err)
+		return migrations.Record{}, databaseContextFailure(operationCtx, "commit schema baseline", err)
 	}
 
 	return migrations.NewRecord(
@@ -257,6 +287,12 @@ type schemaQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+func baselineLedgerVersion(baseline migrations.Baseline) int64 {
+	// #nosec G115 -- Baseline has private fields and NewBaseline rejects
+	// versions above math.MaxInt64 before PostgreSQL persistence can receive one.
+	return int64(baseline.Version())
+}
+
 func inspectSchema(ctx context.Context, queryer schemaQueryer) (migrations.Checksum, error) {
 	objects, err := inspectObjects(ctx, queryer)
 	if err != nil {
@@ -269,21 +305,42 @@ func inspectSchema(ctx context.Context, queryer schemaQueryer) (migrations.Check
 func inspectObjects(ctx context.Context, queryer schemaQueryer) ([]SchemaObject, error) {
 	rows, err := queryer.QueryContext(ctx, schemaObjectsSQL)
 	if err != nil {
-		return nil, fmt.Errorf("inspect PostgreSQL schema: %w", err)
+		return nil, databaseContextFailure(ctx, "inspect PostgreSQL schema", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	objects := make([]SchemaObject, 0)
+	objects := make([]SchemaObject, 0, min(MaxSchemaObjects, 128))
+	totalBytes := 0
 	for rows.Next() {
+		if len(objects) >= MaxSchemaObjects {
+			return nil, ErrResourceLimit
+		}
 		var object SchemaObject
 		if err := rows.Scan(&object.Identity, &object.Definition); err != nil {
-			return nil, fmt.Errorf("%w: scan schema object: %w", ErrInvalidSchemaSnapshot, err)
+			return nil, databaseContextFailure(
+				ctx,
+				"scan PostgreSQL schema object",
+				errors.Join(ErrInvalidSchemaSnapshot, err),
+			)
+		}
+		totalBytes, err = validateSchemaObjectBounds(totalBytes, object)
+		if err != nil {
+			return nil, err
 		}
 		objects = append(objects, object)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("inspect PostgreSQL schema rows: %w", err)
+		return nil, databaseContextFailure(ctx, "iterate PostgreSQL schema rows", err)
 	}
 
 	return objects, nil
+}
+
+func validateSchemaObjectBounds(total int, object SchemaObject) (int, error) {
+	if len(object.Identity) > MaxSchemaObjectIdentityBytes ||
+		len(object.Definition) > MaxSchemaObjectDefinitionBytes {
+		return 0, ErrResourceLimit
+	}
+
+	return boundedTextBytes(total, MaxSchemaSnapshotBytes, object.Identity, object.Definition)
 }

@@ -3,6 +3,7 @@ package migrations
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -30,6 +31,9 @@ const (
 var (
 	// ErrInvalidRecord indicates malformed owned-ledger data.
 	ErrInvalidRecord = errors.New("invalid migration record")
+	// ErrHistoryLimit indicates source or ledger history beyond the public
+	// planning and status retention budget.
+	ErrHistoryLimit = errors.New("migration history limit exceeded")
 	// ErrDirty indicates an interrupted or partially applied migration.
 	ErrDirty = errors.New("dirty migration history")
 	// ErrChecksumMismatch indicates an applied migration was modified.
@@ -44,6 +48,12 @@ var (
 	ErrInvalidTarget = errors.New("invalid migration target")
 	// ErrIrreversible indicates that rollback SQL was not provided.
 	ErrIrreversible = errors.New("migration is irreversible")
+)
+
+const (
+	// MaxMigrationRecords is the largest complete ledger history accepted by
+	// planning and status operations: one baseline plus MaxMigrationFiles.
+	MaxMigrationRecords = MaxMigrationFiles + 1
 )
 
 // Record is an immutable entry read from public.go_schema_migrations.
@@ -70,7 +80,7 @@ func NewRecord(
 	if kind != RecordKindMigration && kind != RecordKindBaseline {
 		return Record{}, ErrInvalidRecord
 	}
-	if version == 0 || !migrationNamePattern.MatchString(name) {
+	if version == 0 || version > Version(math.MaxInt64) || !validMigrationName(name) {
 		return Record{}, ErrInvalidRecord
 	}
 	if checksum == (Checksum{}) || appliedAt.IsZero() || duration < 0 {
@@ -230,6 +240,9 @@ func PlanDown(available []Migration, records []Record, count uint64) (Plan, erro
 }
 
 func validateAvailableOrder(available []Migration) error {
+	if len(available) > MaxMigrationFiles {
+		return ErrHistoryLimit
+	}
 	var previous Version
 	for _, migration := range available {
 		if migration.Version() == 0 || migration.Name() == "" || migration.Checksum() == (Checksum{}) {
@@ -245,6 +258,9 @@ func validateAvailableOrder(available []Migration) error {
 }
 
 func validateRecords(records []Record) (Version, map[Version]Record, error) {
+	if len(records) > MaxMigrationRecords {
+		return 0, nil, ErrHistoryLimit
+	}
 	applied := make(map[Version]Record, len(records))
 	var baselineVersion Version
 	var previous Version

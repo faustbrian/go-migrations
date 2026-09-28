@@ -15,12 +15,16 @@ var (
 	ErrInvalidRunner = errors.New("invalid migration runner")
 	// ErrBackendResult indicates an engine violated the public backend contract.
 	ErrBackendResult = errors.New("invalid migration backend result")
+	// ErrExecutionFailed identifies migration SQL execution failure without
+	// exposing database-driver diagnostics or migration contents.
+	ErrExecutionFailed = errors.New("migration SQL execution failed")
 )
 
 // Session represents exclusive migration-job ownership bound to one physical
 // database connection. Ledger preparation, reads, and execution all happen
 // through this value so connection loss and lock loss cannot be separated from
 // execution and a one-connection pool cannot deadlock during preparation.
+// Records must return at most MaxMigrationRecords entries.
 type Session interface {
 	Prepare(context.Context) error
 	Records(context.Context) ([]Record, error)
@@ -34,7 +38,8 @@ type Session interface {
 // Session.Apply must return only after both execution and owned-ledger
 // persistence have reached an explicit recoverable outcome. Implementations
 // must leave a dirty record when non-transactional execution has an uncertain
-// or partial result.
+// or partial result. Every operation must honor its context and return bounded
+// results required by Session.
 type Backend interface {
 	Acquire(context.Context) (Session, error)
 }
@@ -563,7 +568,7 @@ func (runner *Runner) Baseline(ctx context.Context, baseline Baseline) (record R
 				phase:     PhaseFailed,
 				version:   baseline.Version(),
 				duration:  elapsed(started),
-				err:       baselineErr,
+				err:       observerBaselineError(baselineErr),
 			})
 
 			return fmt.Errorf("record schema baseline: %w", baselineErr)
@@ -586,6 +591,14 @@ func (runner *Runner) Baseline(ctx context.Context, baseline Baseline) (record R
 	})
 
 	return record, err
+}
+
+func observerBaselineError(err error) error {
+	if errors.Is(err, ErrBaselineMismatch) {
+		return ErrBaselineMismatch
+	}
+
+	return err
 }
 
 func validateBackendRecord(migration Migration, record Record) error {

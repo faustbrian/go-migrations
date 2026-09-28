@@ -1,12 +1,17 @@
 # Security
 
+The repository-specific, versioned [threat model](threat-model.md) inventories
+assets, trust boundaries, controls, accepted risks, and current v2 release
+blockers. This page provides the corresponding operator guidance.
+
 Migration files are trusted deployment artifacts with database-owner power.
 Review them like application code, pin module dependencies, verify checksums in
 CI, and restrict who can change migration and baseline files.
 
 Use a dedicated database role with only the DDL privileges the reviewed change
 requires. Protect connection strings through the platform secret mechanism and
-never include SQL or credentials in observers. The built-in events omit SQL.
+never include SQL or credentials in observers. The built-in events omit SQL
+and render database failures through stable redacted categories.
 The role must be able to create and use `public.go_schema_migrations`; ledger
 queries explicitly qualify `public` and do not trust the connection's
 `search_path`.
@@ -27,16 +32,24 @@ required during baseline review and migration windows.
 | Concurrent or restarted deployment jobs | Connection-bound advisory lock and post-lock revalidation |
 | Process or connection loss | Atomic rollback or a persisted dirty row requiring explicit recovery |
 | Baseline against partial, drifted, or advanced schema | Serializable exact schema fingerprint comparison |
-| Malformed pre-existing ledger | Independent decoding and completion-state validation |
+| Malformed or out-of-range ledger values | Constructor range checks plus independent version, duration, and completion-state validation before rollback or recovery mutation |
 | Adapter replacement or upgrade | Neutral public API, owned ledger provenance, and compatibility corpus |
 | Observer failure or sensitive SQL disclosure | Panic isolation and structured events without SQL |
-| Parser resource exhaustion | A 16 MiB file limit, bounded reads, and cancellation checks |
+| Parser resource exhaustion | A cancellation-aware provider contract plus 4 KiB source-root, 4,096-file, 255-byte canonical-name, 1 MiB aggregate filename, and 16 MiB file-content limits that are enforced by the provider and revalidated by the package |
+| Oversized ledger or schema catalog | 4,097 ledger records and 16 MiB ledger text; 10,000 schema objects, bounded fields, and 16 MiB schema text |
+| Missing caller deadline during source or database work | Finite default source, lock, statement, and primary-operation timeouts, with only positive finite overrides |
 
 Migration SQL itself is trusted code and can perform any operation granted to
 the database role. A malicious database administrator, compromised deployment
-role, PostgreSQL server compromise, and availability attacks outside configured
-timeouts are out of scope. Those risks require platform access controls,
-auditing, backups, and incident response rather than migration parsing.
+role, and PostgreSQL server compromise are out of scope. Deliberate resource
+exhaustion within caller-selected finite timeout budgets remains a deployment
+capacity concern. Those risks require platform access controls, auditing,
+backups, and incident response rather than migration parsing.
+
+No known unowned Critical or High finding remains in the planned v2 source.
+The standard-library transaction and cleanup cancellation limitation is owned
+explicitly in the threat model. Publication remains blocked by its
+planned-major release and consumer migration boundaries.
 
 Operational controls and compatibility constraints are documented in the
 [operations guide](operations.md) and [compatibility policy](compatibility.md).

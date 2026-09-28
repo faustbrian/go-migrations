@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 func TestNewMigrationCreatesImmutableCanonicalIdentity(t *testing.T) {
@@ -85,6 +85,32 @@ func TestNewMigrationRejectsInvalidCanonicalIdentity(t *testing.T) {
 	}
 }
 
+func TestNewMigrationBoundsCanonicalNameBytes(t *testing.T) {
+	t.Parallel()
+
+	maximumName := strings.Repeat("a", migrations.MaxMigrationNameBytes)
+	if _, err := migrations.NewMigration(
+		1,
+		maximumName,
+		migrations.TransactionModeDefault,
+		"SELECT 1;",
+		"",
+	); err != nil {
+		t.Fatalf("NewMigration(maximum name) error = %v", err)
+	}
+
+	_, err := migrations.NewMigration(
+		1,
+		maximumName+"a",
+		migrations.TransactionModeDefault,
+		"SELECT 1;",
+		"",
+	)
+	if !errors.Is(err, migrations.ErrInvalidName) {
+		t.Fatalf("NewMigration(oversized name) error = %v, want ErrInvalidName", err)
+	}
+}
+
 func TestParseChecksumRoundTripsCanonicalText(t *testing.T) {
 	t.Parallel()
 
@@ -102,6 +128,33 @@ func TestParseChecksumRoundTripsCanonicalText(t *testing.T) {
 	}
 	if _, err := migrations.ParseChecksum("sha256:" + strings.Repeat("0", 64)); !errors.Is(err, migrations.ErrInvalidChecksum) {
 		t.Fatalf("ParseChecksum(zero) error = %v, want ErrInvalidChecksum", err)
+	}
+}
+
+func TestParseChecksumRejectsOversizedPayloadBeforeAllocation(t *testing.T) {
+	oversized := "sha256:" + strings.Repeat("a", 1<<20)
+	allocations := testing.AllocsPerRun(10, func() {
+		if _, err := migrations.ParseChecksum(oversized); !errors.Is(err, migrations.ErrInvalidChecksum) {
+			t.Fatalf("oversized checksum error = %v, want ErrInvalidChecksum", err)
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("oversized checksum allocations = %v, want zero before admission", allocations)
+	}
+}
+
+func TestNewMigrationRejectsOversizedSQLBeforeWhitespaceClassification(t *testing.T) {
+	const maximum = 16 << 20
+	for _, test := range []struct{ name, up, down string }{
+		{name: "oversized empty up", up: strings.Repeat(" ", maximum+1)},
+		{name: "oversized empty down", up: "SELECT 1;", down: strings.Repeat(" ", maximum)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := migrations.NewMigration(1, "admission_probe", migrations.TransactionModeDefault, test.up, test.down)
+			if !errors.Is(err, migrations.ErrInvalidEncoding) {
+				t.Fatalf("oversized SQL error = %v, want ErrInvalidEncoding before whitespace classification", err)
+			}
+		})
 	}
 }
 

@@ -3,16 +3,18 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 func TestFSSourceLoadsCanonicalMigrationsInVersionOrder(t *testing.T) {
 	t.Parallel()
 
-	source, err := migrations.NewFSSource(fstest.MapFS{
+	source, err := migrations.NewFSSource(testSourceFileSystem{files: fstest.MapFS{
 		"migrations/000002_add_email.sql": &fstest.MapFile{Data: []byte(
 			"-- +migrations NoTransaction\n" +
 				"-- +migrations Up\n" +
@@ -28,7 +30,7 @@ func TestFSSourceLoadsCanonicalMigrationsInVersionOrder(t *testing.T) {
 				"-- +migrations Down\n" +
 				"DROP TABLE users;\n",
 		)},
-	}, "migrations")
+	}}, "migrations")
 	if err != nil {
 		t.Fatalf("NewFSSource() error = %v", err)
 	}
@@ -118,7 +120,7 @@ func TestFSSourceRejectsAmbiguousOrHostileFiles(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			source, err := migrations.NewFSSource(test.files, "migrations")
+			source, err := migrations.NewFSSource(testSourceFileSystem{files: test.files}, "migrations")
 			if err != nil {
 				t.Fatalf("NewFSSource() error = %v", err)
 			}
@@ -136,7 +138,71 @@ func TestNewFSSourceRejectsInvalidConfiguration(t *testing.T) {
 	if _, err := migrations.NewFSSource(nil, "."); !errors.Is(err, migrations.ErrInvalidSource) {
 		t.Fatalf("NewFSSource(nil) error = %v, want ErrInvalidSource", err)
 	}
-	if _, err := migrations.NewFSSource(fstest.MapFS{}, "../migrations"); !errors.Is(err, migrations.ErrInvalidSource) {
+	if _, err := migrations.NewFSSource(testSourceFileSystem{files: fstest.MapFS{}}, "../migrations"); !errors.Is(err, migrations.ErrInvalidSource) {
 		t.Fatalf("NewFSSource(path) error = %v, want ErrInvalidSource", err)
 	}
+}
+
+func TestNewFSSourceBoundsRootBytesBeforePathValidation(t *testing.T) {
+	t.Parallel()
+
+	maximumRoot := strings.Repeat("a", migrations.MaxMigrationSourceRootBytes)
+	if _, err := migrations.NewFSSource(testSourceFileSystem{files: fstest.MapFS{}}, maximumRoot); err != nil {
+		t.Fatalf("NewFSSource(maximum root) error = %v", err)
+	}
+	if _, err := migrations.NewFSSource(testSourceFileSystem{files: fstest.MapFS{}}, maximumRoot+"a"); !errors.Is(err, migrations.ErrInvalidSource) {
+		t.Fatalf("NewFSSource(oversized root) error = %v, want ErrInvalidSource", err)
+	}
+}
+
+type testSourceFileSystem struct {
+	files fs.FS
+}
+
+func (filesystem testSourceFileSystem) ReadDir(
+	ctx context.Context,
+	root string,
+	limits migrations.SourceDirectoryLimits,
+) ([]migrations.SourceEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(filesystem.files, root)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > limits.MaxEntries {
+		return nil, migrations.ErrSourceLimit
+	}
+	converted := make([]migrations.SourceEntry, 0, len(entries))
+	totalNameBytes := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) > limits.MaxNameBytes || len(name) > limits.MaxTotalNameBytes-totalNameBytes {
+			return nil, migrations.ErrSourceLimit
+		}
+		totalNameBytes += len(name)
+		converted = append(converted, migrations.SourceEntry{Name: name, Directory: entry.IsDir()})
+	}
+
+	return converted, ctx.Err()
+}
+
+func (filesystem testSourceFileSystem) ReadFile(
+	ctx context.Context,
+	name string,
+	maxBytes int,
+) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	contents, err := fs.ReadFile(filesystem.files, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maxBytes {
+		return nil, migrations.ErrInvalidEncoding
+	}
+
+	return contents, ctx.Err()
 }

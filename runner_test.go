@@ -3,11 +3,13 @@ package migrations_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
 
 func TestRunnerUpLocksRevalidatesAndAppliesPlan(t *testing.T) {
@@ -155,6 +157,68 @@ func TestRunnerRejectsInvalidDependencies(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsCustomBoundaryResultsBeyondFiniteBudget(t *testing.T) {
+	t.Parallel()
+
+	runner, err := migrations.NewRunner(
+		staticSource{migrations: make([]migrations.Migration, migrations.MaxMigrationFiles+1)},
+		&recordingBackend{},
+	)
+	if err != nil {
+		t.Fatalf("NewRunner(source) error = %v", err)
+	}
+	if _, err := runner.Plan(context.Background()); !errors.Is(err, migrations.ErrHistoryLimit) {
+		t.Fatalf("Plan() error = %v, want ErrHistoryLimit", err)
+	}
+
+	runner, err = migrations.NewRunner(
+		staticSource{},
+		&recordingBackend{records: make([]migrations.Record, migrations.MaxMigrationRecords+1)},
+	)
+	if err != nil {
+		t.Fatalf("NewRunner(backend) error = %v", err)
+	}
+	if _, err := runner.Status(context.Background()); !errors.Is(err, migrations.ErrHistoryLimit) {
+		t.Fatalf("Status() error = %v, want ErrHistoryLimit", err)
+	}
+}
+
+func TestRunnerRedactsBaselineFingerprintsFromObserver(t *testing.T) {
+	t.Parallel()
+
+	want := migrations.ChecksumData([]byte("wanted schema"))
+	actual := migrations.ChecksumData([]byte("actual schema"))
+	detailed := fmt.Errorf("%w: expected %s, got %s", migrations.ErrBaselineMismatch, want, actual)
+	observer := &recordingObserver{}
+	runner, err := migrations.NewRunner(
+		staticSource{},
+		&recordingBackend{baselineError: detailed},
+		migrations.WithObserver(observer),
+	)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	baseline, err := migrations.NewBaseline(1, "reviewed", want)
+	if err != nil {
+		t.Fatalf("NewBaseline() error = %v", err)
+	}
+	if _, err := runner.Baseline(context.Background(), baseline); !errors.Is(err, migrations.ErrBaselineMismatch) {
+		t.Fatalf("Baseline() error = %v, want ErrBaselineMismatch", err)
+	}
+
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	var failed migrations.Event
+	for _, event := range observer.events {
+		if event.Operation() == migrations.OperationBaseline && event.Phase() == migrations.PhaseFailed {
+			failed = event
+		}
+	}
+	if failed.Err() != migrations.ErrBaselineMismatch || strings.Contains(failed.Err().Error(), want.String()) || strings.Contains(failed.Err().Error(), actual.String()) {
+		t.Fatalf("failed baseline observer error = %v, want redacted ErrBaselineMismatch", failed.Err())
+	}
+}
+
 type staticSource struct {
 	migrations []migrations.Migration
 	err        error
@@ -172,6 +236,7 @@ type recordingBackend struct {
 	applyError          error
 	lock                *recordingLock
 	baselineFingerprint migrations.Checksum
+	baselineError       error
 }
 
 func (backend *recordingBackend) Acquire(context.Context) (migrations.Session, error) {
@@ -243,6 +308,9 @@ func (session *recordingSession) Rollback(_ context.Context, migration migration
 
 func (session *recordingSession) Baseline(_ context.Context, baseline migrations.Baseline) (migrations.Record, error) {
 	session.backend.append("baseline:" + baseline.Version().String())
+	if session.backend.baselineError != nil {
+		return migrations.Record{}, session.backend.baselineError
+	}
 	if baseline.Fingerprint() != session.backend.baselineFingerprint {
 		return migrations.Record{}, migrations.ErrBaselineMismatch
 	}

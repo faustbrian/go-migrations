@@ -11,7 +11,9 @@ after success. Connection or process loss at any boundary must result in either
 an atomic rollback or a detectable dirty outcome. Recovery must be explicit and
 checksum-bound. `Session.Prepare`, record reads, migration SQL, recovery, and
 release must use the same lock-owning physical connection. Backend-specific
-conformance coverage must include a pool restricted to one connection.
+operations must honor their contexts, `Source.Load` must return no more than
+4,096 migrations, and `Session.Records` must return no more than 4,097 records.
+Conformance coverage must include a pool restricted to one connection.
 
 Before replacement, construct a `conformance.Harness` with engine-specific SQL,
 runner construction, and partial-effect cleanup, then call `conformance.Run`

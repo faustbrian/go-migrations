@@ -1,6 +1,9 @@
 package migrations
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 var (
 	// ErrInvalidBaseline indicates malformed reviewed baseline metadata.
@@ -26,7 +29,8 @@ type Baseline struct {
 
 // NewBaseline validates a reviewed baseline contract.
 func NewBaseline(version Version, name string, fingerprint Checksum) (Baseline, error) {
-	if version == 0 || !migrationNamePattern.MatchString(name) || fingerprint == (Checksum{}) {
+	if version == 0 || version > Version(math.MaxInt64) ||
+		!validMigrationName(name) || fingerprint == (Checksum{}) {
 		return Baseline{}, ErrInvalidBaseline
 	}
 

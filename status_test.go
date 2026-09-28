@@ -2,10 +2,22 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations"
+	migrations "github.com/faustbrian/go-migrations/v2"
 )
+
+func TestBuildStatusRejectsHistoryBeyondFiniteBudget(t *testing.T) {
+	t.Parallel()
+
+	if _, err := migrations.BuildStatus(make([]migrations.Migration, migrations.MaxMigrationFiles+1), nil); !errors.Is(err, migrations.ErrHistoryLimit) {
+		t.Fatalf("BuildStatus(available) error = %v, want ErrHistoryLimit", err)
+	}
+	if _, err := migrations.BuildStatus(nil, make([]migrations.Record, migrations.MaxMigrationRecords+1)); !errors.Is(err, migrations.ErrHistoryLimit) {
+		t.Fatalf("BuildStatus(records) error = %v, want ErrHistoryLimit", err)
+	}
+}
 
 func TestBuildStatusReportsBaselineAppliedDirtyAndPendingState(t *testing.T) {
 	t.Parallel()

@@ -7,12 +7,13 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
-	"github.com/faustbrian/go-migrations/postgres"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	"github.com/faustbrian/go-migrations/v2/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -36,7 +37,7 @@ func run(ctx context.Context) error {
 	}
 	defer func() { _ = database.Close() }()
 
-	source, err := migrations.NewFSSource(migrationFiles, "migrations")
+	source, err := migrations.NewFSSource(embeddedSourceFileSystem{files: migrationFiles}, "migrations")
 	if err != nil {
 		return fmt.Errorf("create migration source: %w", err)
 	}
@@ -58,12 +59,15 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("plan migrations: %w", err)
 	}
 	for _, step := range plan.Steps() {
+		// #nosec G706 -- action and version are numeric, and migration names are
+		// constructor-validated lowercase snake case without control characters.
 		log.Printf("planned action=%d version=%s name=%s", step.Action(), step.Migration().Version(), step.Migration().Name())
 	}
 	result, err := runner.Up(ctx)
 	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
+	// #nosec G706 -- the only formatted value is a process-local integer count.
 	log.Printf("completed migrations=%d", len(result.Records()))
 
 	status, err := runner.Status(ctx)
@@ -71,10 +75,64 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("read migration status: %w", err)
 	}
 	for _, entry := range status.Entries() {
+		// #nosec G706 -- state and version are numeric, and names are canonical
+		// validated migration identifiers without control characters.
 		log.Printf("status state=%d version=%s name=%s", entry.State(), entry.Version(), entry.Name())
 	}
 
 	return nil
+}
+
+type embeddedSourceFileSystem struct {
+	files embed.FS
+}
+
+func (filesystem embeddedSourceFileSystem) ReadDir(
+	ctx context.Context,
+	root string,
+	limits migrations.SourceDirectoryLimits,
+) ([]migrations.SourceEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(filesystem.files, root)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > limits.MaxEntries {
+		return nil, migrations.ErrSourceLimit
+	}
+	converted := make([]migrations.SourceEntry, 0, len(entries))
+	totalNameBytes := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) > limits.MaxNameBytes || len(name) > limits.MaxTotalNameBytes-totalNameBytes {
+			return nil, migrations.ErrSourceLimit
+		}
+		totalNameBytes += len(name)
+		converted = append(converted, migrations.SourceEntry{Name: name, Directory: entry.IsDir()})
+	}
+
+	return converted, ctx.Err()
+}
+
+func (filesystem embeddedSourceFileSystem) ReadFile(
+	ctx context.Context,
+	name string,
+	maxBytes int,
+) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	contents, err := fs.ReadFile(filesystem.files, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maxBytes {
+		return nil, migrations.ErrInvalidEncoding
+	}
+
+	return contents, ctx.Err()
 }
 
 type logObserver struct{}

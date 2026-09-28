@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -16,9 +18,9 @@ import (
 	"testing/fstest"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations"
-	"github.com/faustbrian/go-migrations/conformance"
-	migrationpostgres "github.com/faustbrian/go-migrations/postgres"
+	migrations "github.com/faustbrian/go-migrations/v2"
+	"github.com/faustbrian/go-migrations/v2/conformance"
+	migrationpostgres "github.com/faustbrian/go-migrations/v2/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -132,6 +134,51 @@ func TestPostgresEngineConformance(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed no transaction rollback leaves clean ledger unchanged", func(t *testing.T) {
+		database := isolatedDatabase(t, admin, connectionString, "rollback_duration")
+		backend, err := migrationpostgres.New(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned, err := backend.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := owned.Release(ctx); err != nil {
+				t.Errorf("release session: %v", err)
+			}
+		}()
+		if err := owned.Prepare(ctx); err != nil {
+			t.Fatal(err)
+		}
+		migration, err := migrations.NewMigration(1, "rollback_duration", migrations.TransactionModeNone,
+			"CREATE TABLE rollback_duration_probe (id bigint);", "DROP TABLE rollback_duration_probe;")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := owned.Apply(ctx, migration); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx,
+			"UPDATE public.go_schema_migrations SET execution_time_ms = $1 WHERE version = 1", int64(math.MaxInt64)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := owned.Rollback(ctx, migration); !errors.Is(err, migrationpostgres.ErrLedgerConflict) {
+			t.Fatalf("rollback error = %v, want ledger conflict", err)
+		}
+		var dirty, finished, tablePresent bool
+		var duration int64
+		if err := database.QueryRowContext(ctx,
+			"SELECT dirty, finished_at IS NOT NULL, execution_time_ms, to_regclass('public.rollback_duration_probe') IS NOT NULL FROM public.go_schema_migrations WHERE version = 1",
+		).Scan(&dirty, &finished, &duration, &tablePresent); err != nil {
+			t.Fatal(err)
+		}
+		if dirty || !finished || duration != math.MaxInt64 || !tablePresent {
+			t.Fatalf("ledger dirty=%t finished=%t duration preserved=%t down target present=%t", dirty, finished, duration == math.MaxInt64, tablePresent)
+		}
+	})
+
 	t.Run("concurrent runners serialize", func(t *testing.T) {
 		database := isolatedDatabase(t, admin, connectionString, "concurrent")
 		files := fstest.MapFS{
@@ -233,7 +280,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 			t.Fatalf("install historical ledger fixture: %v", err)
 		}
 		source, err := migrations.NewFSSource(
-			os.DirFS("../testdata/compatibility/v1"),
+			integrationSourceFileSystem{files: os.DirFS("../testdata/compatibility/v1")},
 			"migrations",
 		)
 		if err != nil {
@@ -519,7 +566,7 @@ LIMIT 1
 		if _, err := database.ExecContext(context.Background(), "DROP TABLE IF EXISTS process_partial"); err != nil {
 			t.Fatalf("remove partial process effect: %v", err)
 		}
-		source, err := migrations.NewFSSource(files, "migrations")
+		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}
@@ -670,7 +717,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		}
 
 		files := cleanUpdateMigrationFiles()
-		source, err := migrations.NewFSSource(files, "migrations")
+		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}
@@ -689,6 +736,50 @@ DROP FUNCTION pause_clean_ledger_update();
 		runner := newIntegrationRunner(t, database, files)
 		if _, err := runner.Recover(context.Background(), recovery); err != nil {
 			t.Fatalf("Recover(mark applied) error = %v", err)
+		}
+	})
+
+	t.Run("ancient dirty recovery stays readable", func(t *testing.T) {
+		database := isolatedDatabase(t, admin, connectionString, "ancient_recovery")
+		backend, err := migrationpostgres.New(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned, err := backend.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := owned.Prepare(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := owned.Release(ctx); err != nil {
+			t.Fatal(err)
+		}
+		migration, err := migrations.NewMigration(1, "ancient_recovery", migrations.TransactionModeNone, "SELECT 1;", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, `INSERT INTO public.go_schema_migrations (version, kind, name, checksum, started_at, execution_time_ms, dirty, engine, engine_version) VALUES (1, 'migration', $1, $2, '1600-01-01T00:00:00Z', 0, true, 'postgres', 'v1')`, migration.Name(), migration.Checksum().String()); err != nil {
+			t.Fatal(err)
+		}
+		owned, err = backend.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := owned.Release(ctx); err != nil {
+				t.Error(err)
+			}
+		}()
+		capable := owned.(interface {
+			Recover(context.Context, migrations.Migration, migrations.RecoveryAction) (migrations.Record, error)
+		})
+		if _, err := capable.Recover(ctx, migration, migrations.RecoveryMarkApplied); !errors.Is(err, migrations.ErrNoDirtyMigration) {
+			t.Fatalf("ancient recovery error = %v, want rejected duration", err)
+		}
+		records, err := owned.Records(ctx)
+		if err != nil || len(records) != 1 || !records[0].Dirty() || records[0].Duration() != 0 {
+			t.Fatalf("ancient dirty history = %#v, %v", records, err)
 		}
 	})
 
@@ -736,7 +827,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		if _, err := database.ExecContext(context.Background(), "DROP TABLE IF EXISTS partial_effect"); err != nil {
 			t.Fatalf("remove reviewed partial effect: %v", err)
 		}
-		source, err := migrations.NewFSSource(files, "migrations")
+		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}
@@ -885,9 +976,9 @@ DROP FUNCTION pause_clean_ledger_update();
 
 	t.Run("statement timeout leaves transactional history retryable", func(t *testing.T) {
 		database := isolatedDatabase(t, admin, connectionString, "timeout")
-		source, err := migrations.NewFSSource(fstest.MapFS{
+		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: fstest.MapFS{
 			"migrations/000001_sleep.sql": &fstest.MapFile{Data: []byte("-- +migrations Up\nSELECT pg_sleep(1);\n")},
-		}, "migrations")
+		}}, "migrations")
 		if err != nil {
 			t.Fatalf("NewFSSource() error = %v", err)
 		}
@@ -986,7 +1077,7 @@ func newIntegrationRunner(
 ) *migrations.Runner {
 	t.Helper()
 
-	source, err := migrations.NewFSSource(files, "migrations")
+	source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
 	if err != nil {
 		t.Fatalf("NewFSSource() error = %v", err)
 	}
@@ -1004,6 +1095,58 @@ func newIntegrationRunner(
 	}
 
 	return runner
+}
+
+type integrationSourceFileSystem struct {
+	files fs.FS
+}
+
+func (filesystem integrationSourceFileSystem) ReadDir(
+	ctx context.Context,
+	root string,
+	limits migrations.SourceDirectoryLimits,
+) ([]migrations.SourceEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(filesystem.files, root)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > limits.MaxEntries {
+		return nil, migrations.ErrSourceLimit
+	}
+	converted := make([]migrations.SourceEntry, 0, len(entries))
+	totalNameBytes := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) > limits.MaxNameBytes || len(name) > limits.MaxTotalNameBytes-totalNameBytes {
+			return nil, migrations.ErrSourceLimit
+		}
+		totalNameBytes += len(name)
+		converted = append(converted, migrations.SourceEntry{Name: name, Directory: entry.IsDir()})
+	}
+
+	return converted, ctx.Err()
+}
+
+func (filesystem integrationSourceFileSystem) ReadFile(
+	ctx context.Context,
+	name string,
+	maxBytes int,
+) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	contents, err := fs.ReadFile(filesystem.files, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maxBytes {
+		return nil, migrations.ErrInvalidEncoding
+	}
+
+	return contents, ctx.Err()
 }
 
 func isolatedDatabase(

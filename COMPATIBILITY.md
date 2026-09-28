@@ -1,11 +1,13 @@
 # Compatibility Policy
 
-This repository has one releasable root Go module and follows semantic
-versioning. Root releases use `v<version>` tags, such as `v1.0.0`; package
-directories are not independently versioned modules and do not use
-directory-prefixed tags.
+This repository follows semantic versioning. Root releases use `v<version>`
+tags, such as the published `v1.1.0`; package directories are not independently
+versioned modules and do not use directory-prefixed tags. The planned v2 module
+in this source tree is not currently releasable.
 
-The stable v1 contract is published. Patch releases MUST remain backward
+The stable v1 contract is published from its original module path. This source
+prepares the next v2 contract at the `/v2` module path, which remains
+unpublished until a v2 tag exists. Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
 require a new major version. The latest patch in the current stable major is
 the supported release for defect and security fixes.

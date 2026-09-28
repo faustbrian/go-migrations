@@ -18,15 +18,41 @@ components. The adapter runs exactly the caller-selected operation as one-shot
 work and cleans those components afterward; it does not retry or choose between
 planning, status, application, rollback, baseline, or recovery.
 
-Set a job deadline, a shorter lock timeout, and a statement timeout appropriate
-for the largest reviewed operation. PostgreSQL statement timeouts must be at
-least one millisecond; smaller values are rejected instead of truncating to the
-special disabled value of `0ms`. Lock polling respects cancellation.
+Set a job deadline and review the backend's finite defaults: 30 seconds for
+advisory-lock acquisition, five minutes for each migration statement, and ten
+minutes for primary work in each session or schema-inspection operation. That
+budget includes waiting for another caller to release serialized session
+ownership. Best-effort statement-timeout restoration and lock release use
+separate positive finite cleanup budgets of at most 30 seconds each. Use
+`WithLockTimeout`, `WithStatementTimeout`, and
+`WithOperationTimeout` when reviewed work needs different finite budgets.
+Overrides must remain positive, and statement and operation timeouts must be at
+least one millisecond; zero cannot silently disable a bound. No-transaction
+execution restores the database-
+or role-level timeout after each attempt. Lock polling respects cancellation.
 Transactional cancellation rolls back both SQL and ledger. No-transaction
 cancellation can leave partial effects and therefore leaves a dirty record.
 Loss of the lock-owning connection releases PostgreSQL advisory ownership; the
 failed operation still returns an error, and a later job must reacquire the lock
 and revalidate complete history before retrying or recovering.
+
+Go's standard `database/sql` commit, rollback, row-close, and connection-close
+APIs cannot accept a context once driver finalization or cleanup begins. Use a
+maintained driver with finite PostgreSQL server and network timeouts, supervise
+the migration process with a hard termination budget, and treat deadline
+expiry during finalization as uncertain until database and ledger state are
+inspected.
+
+Ledger reads retain at most 4,097 records and 16 MiB of aggregate text. Schema
+inspection retains at most 10,000 objects, 4 KiB per identity, 1 MiB per
+definition, and 16 MiB of aggregate text. `ErrResourceLimit` identifies these
+fail-closed outcomes. A database driver can allocate the current field before
+the package validates it, so use a maintained driver and retain process memory
+limits.
+
+Source loading independently defaults to ten minutes and can be configured
+with a positive `WithSourceTimeout` override. Custom sources and backends must
+honor operation contexts and return at most 4,096 migrations and 4,097 records.
 
 ## Dry run and status
 

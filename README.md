@@ -16,14 +16,23 @@ checksums, baselines, recovery, and the `public.go_schema_migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
-The module has a stable v1 API. The minimum supported and tested toolchain is
-Go 1.27.0.
+This source tree prepares the unpublished
+`github.com/faustbrian/go-migrations/v2` module. Its release is blocked until
+the v2 release gates pass and direct consumers can migrate. V1.1.0 remains the
+latest published release. The minimum supported and tested toolchain is Go
+1.27.0.
 
 ## Install
 
 ```sh
-go get github.com/faustbrian/go-migrations@v1
+go get github.com/faustbrian/go-migrations@v1.1.0
 ```
+
+Existing consumers must remain on released v1; do not use local `replace`
+directives to consume this checkout as v1. After v2 is published, upgrading
+requires adding `/v2` to every migrations import path, implementing the bounded
+and cancellation-aware `SourceFileSystem` contract, and reviewing the finite
+PostgreSQL timeout defaults. V2 preserves the persisted ledger format.
 
 The supported Go and PostgreSQL versions are documented in
 [compatibility](docs/compatibility.md).
@@ -47,13 +56,16 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
+The source tree uses these planned v2 import paths. They are not installable
+until the v2 release is published.
+
 | Import path | Use |
 | --- | --- |
-| `github.com/faustbrian/go-migrations` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
-| `github.com/faustbrian/go-migrations/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
-| `github.com/faustbrian/go-migrations/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
-| `github.com/faustbrian/go-migrations/conformance` | Verify an alternative backend against the public engine contract in tests. |
+| `github.com/faustbrian/go-migrations/v2` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
+| `github.com/faustbrian/go-migrations/v2/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
+| `github.com/faustbrian/go-migrations/v2/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
+| `github.com/faustbrian/go-migrations/v2/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
+| `github.com/faustbrian/go-migrations/v2/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
 
@@ -72,9 +84,23 @@ module.
 `NewFSSource`, `postgres.New`, and `NewRunner` validate their inputs without
 opening a migration session or executing SQL. `NewRunner` defaults lock-release
 cleanup to 30 seconds. The PostgreSQL backend polls a held advisory lock every
-100 milliseconds; lock and statement deadlines remain disabled until the
-caller selects `WithLockTimeout` or `WithStatementTimeout`. Invalid options and
-nil collaborators fail construction.
+100 milliseconds, defaults lock acquisition to 30 seconds, and defaults each
+migration statement to five minutes. Primary work in each operation, including
+waiting for serialized session ownership, defaults to ten minutes. Detached
+best-effort statement-timeout restoration and lock release each use a separate
+finite cleanup budget of at most 30 seconds.
+`WithLockTimeout`, `WithStatementTimeout`, and `WithOperationTimeout` replace
+those defaults with positive finite values; zero and negative overrides are
+rejected. Invalid options and nil collaborators fail construction.
+
+`NewFSSource` accepts a caller-owned `SourceFileSystem`. A complete source load
+defaults to ten minutes; `WithSourceTimeout` accepts a positive finite
+override. Its `ReadDir` and
+`ReadFile` implementations must pass the supplied context to every blocking
+operation and enforce the supplied count and byte limits before retaining or
+returning data. The package revalidates returned inventories and file bytes.
+The embedded example implements this boundary over compiler-owned immutable
+data; networked or disk-backed providers need native cancellation-aware I/O.
 
 Runner and PostgreSQL backend functional options are applied from left to
 right. Construction stops at the first nil or failing option, so later options
@@ -89,6 +115,11 @@ returning. Cancellation is returned through the ordinary error chain;
 non-transactional work can instead leave a visible dirty record when the
 external outcome is not safely reversible. Stable error categories support
 `errors.Is`, while wrapped causes retain operational detail.
+
+Go's standard `database/sql` transaction finalization and cleanup calls cannot
+accept a context once driver cleanup begins. Use maintained drivers with
+finite server and network timeouts plus a supervised deployment-process hard
+deadline, and inspect database and ledger state before retry after expiry.
 
 The runner starts no goroutines and has no `Close` or `Shutdown` method. The
 caller retains the source, observer, and `*sql.DB` and must close the database.
