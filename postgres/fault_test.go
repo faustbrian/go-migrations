@@ -37,6 +37,48 @@ type structuredDatabaseDiagnostic struct {
 
 func (structuredDatabaseDiagnostic) Error() string { return "driver operation failed" }
 
+// These ownership checks run before parallel fixtures that can wait on a
+// broken session or an unclosed catalog cursor.
+func TestPostgresOwnershipBoundaries(t *testing.T) {
+	if !t.Run("released session rejects immediately", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		if err := (&session{}).Prepare(ctx); !errors.Is(err, ErrSessionReleased) {
+			t.Fatalf("Prepare(released) error = %v, want ErrSessionReleased", err)
+		}
+	}) {
+		return
+	}
+	if !t.Run("release relinquishes connection", func(t *testing.T) {
+		owned, mock := faultSession(t, 0)
+		mock.ExpectQuery("SELECT pg_advisory_unlock").WillReturnRows(
+			sqlmock.NewRows([]string{"pg_advisory_unlock"}).AddRow(true),
+		)
+		if err := owned.Release(context.Background()); err != nil {
+			t.Fatalf("Release() error = %v", err)
+		}
+		if !owned.released || owned.connection != nil {
+			t.Fatal("Release() retained the advisory-lock connection")
+		}
+		assertFaultExpectations(t, mock)
+	}) {
+		return
+	}
+	t.Run("catalog rows are returned", func(t *testing.T) {
+		database, mock := faultDatabase(t)
+		mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").WillReturnRows(
+			sqlmock.NewRows([]string{"object_identity", "definition"}).AddRow("table:public.users", "table definition"),
+		)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		objects, err := inspectObjects(ctx, database)
+		if err != nil || len(objects) != 1 || objects[0].Identity != "table:public.users" {
+			t.Fatalf("inspectObjects() = %#v, %v, want catalog object", objects, err)
+		}
+		assertFaultExpectations(t, mock)
+	})
+}
+
 func TestDatabaseContextFailurePreservesNil(t *testing.T) {
 	t.Parallel()
 
