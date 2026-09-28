@@ -1,8 +1,8 @@
 # Security
 
 The repository-specific, versioned [threat model](threat-model.md) inventories
-assets, trust boundaries, controls, accepted risks, and current v2 release
-blockers. This page provides the corresponding operator guidance.
+assets, trust boundaries, controls, accepted risks, and v2 release
+requirements. This page provides the corresponding operator guidance.
 
 Migration files are trusted deployment artifacts with database-owner power.
 Review them like application code, pin module dependencies, verify checksums in
@@ -46,10 +46,10 @@ exhaustion within caller-selected finite timeout budgets remains a deployment
 capacity concern. Those risks require platform access controls, auditing,
 backups, and incident response rather than migration parsing.
 
-No known unowned Critical or High finding remains in the planned v2 source.
+No known unowned Critical or High finding remains in the v2 source.
 The standard-library transaction and cleanup cancellation limitation is owned
-explicitly in the threat model. Publication remains blocked by its
-planned-major release and consumer migration boundaries.
+explicitly in the threat model. Publication requires release-gate and
+direct-consumer migration evidence.
 
 Operational controls and compatibility constraints are documented in the
 [operations guide](operations.md) and [compatibility policy](compatibility.md).

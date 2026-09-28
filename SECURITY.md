@@ -2,8 +2,10 @@
 
 ## Supported versions
 
-The latest published `v1` release receives security fixes. Supported release
-lines are listed here and in the compatibility documentation.
+The latest published `v1` release receives security fixes. The `v2` line
+becomes supported when `v2.0.0` is published; its latest patch then receives
+security fixes. Supported release lines are listed here and in the
+compatibility documentation.
 
 ## Reporting a vulnerability
 
