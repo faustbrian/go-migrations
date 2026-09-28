@@ -1,7 +1,7 @@
 # Documentation
 
-This source prepares the next v2 `migrations` module for deterministic,
-engine-neutral database migrations; v1 remains the latest published line. The
+This source contains the v2 `migrations` module for deterministic,
+engine-neutral database migrations; v1 remains available. The
 root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
 `adapters/service` adapts an explicit runner to a one-shot service command;
@@ -9,7 +9,7 @@ root package owns migration identity and orchestration,
 and `conformance` is the backend testing helper. The caller owns the source,
 observer, and database; operations accept context cancellation and the module
 starts no background work. The threat model records the security controls and
-accepted risks for the planned v2 boundary.
+accepted risks for the v2 boundary.
 
 ## Getting started
 
@@ -17,8 +17,8 @@ accepted risks for the planned v2 boundary.
 - [Executable deployment-job example](../examples/job/main.go)
 - [PostgreSQL integration](go-postgres.md)
 - [Architecture and engine contract](architecture.md)
-- [Published v1 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations)
-- [Published v1 backend conformance testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/conformance)
+- [V2 API reference after publication](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2)
+- [V2 backend conformance helper after publication](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance)
 
 ## Operations
 

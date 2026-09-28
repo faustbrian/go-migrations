@@ -2,15 +2,15 @@
 
 This repository follows semantic versioning. Root releases use `v<version>`
 tags, such as the published `v1.1.0`; package directories are not independently
-versioned modules and do not use directory-prefixed tags. The planned v2 module
-in this source tree is not currently releasable.
+versioned modules and do not use directory-prefixed tags. The v2 module uses
+the `/v2` module suffix without a version-specific source directory.
 
 The stable v1 contract is published from its original module path. This source
-prepares the next v2 contract at the `/v2` module path, which remains
-unpublished until a v2 tag exists. Patch releases MUST remain backward
+contains the v2 contract at the `/v2` module path; public installation requires
+a v2 tag. Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
-require a new major version. The latest patch in the current stable major is
-the supported release for defect and security fixes.
+require a new major version. The latest patch in each supported major is the
+supported release for defect and security fixes.
 
 Compatibility includes exported Go APIs, error classification, serialization,
 protocol behavior, persistence schemas, environment variables, command output,

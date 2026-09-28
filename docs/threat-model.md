@@ -2,7 +2,7 @@
 
 **Model version:** 1.1
 
-**Applies to:** planned `github.com/faustbrian/go-migrations/v2` source
+**Applies to:** `github.com/faustbrian/go-migrations/v2` source
 
 **Reviewed:** 2026-09-27
 
@@ -14,9 +14,8 @@ and release automation. The [security guidance](security.md) provides operator
 controls, and the repository [security policy](../SECURITY.md) defines private
 reporting.
 
-Released v1.1.0 retains its published behavior. The planned v2 source remains
-non-releasable until its release gates pass and direct consumers have a
-published migration boundary.
+Released v1.1.0 retains its published behavior. Every v2 public release must
+pass its release gates and direct-consumer migration checks before publication.
 
 ## Assets and required properties
 
@@ -43,7 +42,7 @@ published migration boundary.
 | Locking and lifecycle | Competing jobs, cancellation, connection loss, and cleanup failure | Connection-bound advisory lock, post-lock revalidation, finite acquisition and release timeouts |
 | Baseline and recovery | Reviewed fingerprints, dirty outcomes, and operator decisions | Serializable baseline transaction, checksum-bound recovery, explicit failure on ambiguity |
 | Observability | Operation, phase, version, duration, and failures | Structured events without SQL; observer panics are contained |
-| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, immutable v1 baseline, planned non-releasable v2 metadata |
+| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, immutable v1 baseline, reviewed v2 release metadata |
 
 Migration files and explicit `Migration` values are trusted deployment
 artifacts with the privileges of the supplied database role. Filesystem
@@ -104,11 +103,11 @@ observers are separate caller-owned trust boundaries.
 
 ## Open release-blocking findings
 
-No known unowned Critical or High finding remains in the planned v2 source.
+No known unowned Critical or High finding remains in the v2 source.
 The context-free standard-library transaction and cleanup boundary is owned as
-MIGRATIONS-RISK-007. Publication remains blocked by the planned-major release
-and direct-consumer migration boundaries recorded in repository metadata and
-compatibility guidance.
+MIGRATIONS-RISK-007. Publication requires release-gate and direct-consumer
+migration evidence; the v1-to-v2 adoption boundary is recorded in compatibility
+guidance.
 
 ## Accepted risks
 

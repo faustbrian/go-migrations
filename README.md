@@ -5,7 +5,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25_required-blue)](CONTRIBUTING.md#verification)
 [![Mutation](https://img.shields.io/badge/mutation-100%25_required-blue)](CONTRIBUTING.md#verification)
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations)
+[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v2.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
 [![Go](https://img.shields.io/badge/go-1.27.0-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -16,23 +16,24 @@ checksums, baselines, recovery, and the `public.go_schema_migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
-This source tree prepares the unpublished
-`github.com/faustbrian/go-migrations/v2` module. Its release is blocked until
-the v2 release gates pass and direct consumers can migrate. V1.1.0 remains the
-latest published release. The minimum supported and tested toolchain is Go
-1.27.0.
+This source tree contains the `github.com/faustbrian/go-migrations/v2` module.
+V1.1.0 remains available at the original module path. Publish v2.0.0 only
+after its release gates and direct-consumer migration checks pass. The minimum
+supported and tested toolchain is Go 1.27.0.
 
 ## Install
 
+After the v2.0.0 tag is published, install the module with:
+
 ```sh
-go get github.com/faustbrian/go-migrations@v1.1.0
+go get github.com/faustbrian/go-migrations/v2@v2.0.0
 ```
 
-Existing consumers must remain on released v1; do not use local `replace`
-directives to consume this checkout as v1. After v2 is published, upgrading
-requires adding `/v2` to every migrations import path, implementing the bounded
-and cancellation-aware `SourceFileSystem` contract, and reviewing the finite
-PostgreSQL timeout defaults. V2 preserves the persisted ledger format.
+Existing consumers can remain on released v1; do not use local `replace`
+directives to consume this checkout as v1. Upgrading requires adding `/v2` to
+every migrations import path, implementing the bounded and cancellation-aware
+`SourceFileSystem` contract, and reviewing the finite PostgreSQL timeout
+defaults. V2 preserves the persisted ledger format.
 
 The supported Go and PostgreSQL versions are documented in
 [compatibility](docs/compatibility.md).
@@ -56,8 +57,8 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
-The source tree uses these planned v2 import paths. They are not installable
-until the v2 release is published.
+The v2 module uses these import paths. Public installation requires the
+v2.0.0 tag.
 
 | Import path | Use |
 | --- | --- |
@@ -140,8 +141,8 @@ it finishes or fails. A missing runner fails during plan construction. Use a
 dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or
 recovery behavior explicitly according to the reviewed operation.
 
-The released `migrationsservice` path remains a deprecated compatibility
-facade. It preserves its generic signatures, named type identities, error
+The v2 `migrationsservice` path is a deprecated compatibility facade for the
+v1 API. It preserves generic signatures, named type identities, error
 sentinels and traversal, command semantics, and caller-owned runner and resource
 lifecycle while delegating to `adapters/service`.
 
@@ -177,9 +178,10 @@ Read the [migration format](docs/migration-format.md),
 
 Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
-maintainer references. The public [API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations),
+maintainer references. After publication, the v2
+[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2),
 [executable example](examples/job/main.go), backend
-[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/conformance),
+[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance),
 [FAQ and troubleshooting](docs/faq.md), [performance baselines](docs/benchmarks.md),
 [compatibility policy](COMPATIBILITY.md), [changelog](CHANGELOG.md),
 [support guide](SUPPORT.md), and [private security-reporting process](SECURITY.md)

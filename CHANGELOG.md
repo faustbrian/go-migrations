@@ -3,7 +3,7 @@
 All notable changes are documented here. The project follows Keep a Changelog
 and Semantic Versioning.
 
-## Unreleased
+## 2.0.0 - 2026-09-28
 
 ### Changed
 
@@ -11,7 +11,7 @@ and Semantic Versioning.
   unlock failures instead of returning potentially locked sessions to the pool.
   Reject malformed stored durations before nontransactional rollback marks a
   clean ledger row dirty.
-- Prepare the secure-default behavior for the
+- Introduce secure-default behavior for the
   `github.com/faustbrian/go-migrations/v2` module path. V1 consumers must add
   `/v2` to migrations imports and provide a cancellation-aware, bounded
   `SourceFileSystem`; the persisted ledger contract remains unchanged.
@@ -20,7 +20,7 @@ and Semantic Versioning.
 - Redact migration SQL execution and PostgreSQL driver diagnostics from default
   errors and observer output while retaining stable error classifications.
 - Add a versioned repository threat model with owned accepted risks and an
-  explicit planned-major release boundary.
+  explicit major-release boundary.
 - Require source providers to accept cancellation and enforce caller-supplied
   directory and file budgets before returning data. Revalidate at most 4,096
   files, a 4 KiB source root, 1 MiB of aggregate filename data, 255-byte
