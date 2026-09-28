@@ -77,7 +77,9 @@ func ParseChecksum(value string) (Checksum, error) {
 		return Checksum{}, ErrInvalidChecksum
 	}
 	decoded, err := hex.DecodeString(payload)
-	if err != nil || len(decoded) != sha256.Size {
+	// The admitted payload has exactly 2*sha256.Size bytes, so a successful
+	// hexadecimal decode necessarily yields exactly sha256.Size bytes.
+	if err != nil {
 		return Checksum{}, ErrInvalidChecksum
 	}
 

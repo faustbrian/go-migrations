@@ -78,10 +78,12 @@ func TestSourceRejectsMigrationCountBeyondFiniteBudget(t *testing.T) {
 func TestSourceRejectsAggregateSQLBeyondFiniteBudget(t *testing.T) {
 	t.Parallel()
 
-	contents := []byte("-- +migrations Up\n" + strings.Repeat("x", MaxMigrationSourceBytes/2))
+	const header = "-- +migrations Up\n"
+	contents := []byte(header + strings.Repeat("x", MaxMigrationSourceBytes/2-len(header)))
 	source, err := NewFSSource(mapSourceFileSystem{files: fstest.MapFS{
 		"migrations/000001_first.sql":  &fstest.MapFile{Data: contents},
 		"migrations/000002_second.sql": &fstest.MapFile{Data: contents},
+		"migrations/000003_third.sql":  &fstest.MapFile{Data: contents},
 	}}, "migrations")
 	if err != nil {
 		t.Fatalf("NewFSSource() error = %v", err)
