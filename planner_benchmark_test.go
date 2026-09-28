@@ -44,7 +44,7 @@ func benchmarkHistorySizes(
 	benchmark func(*testing.B, []Migration, []Record),
 ) {
 	b.Helper()
-	for _, count := range []int{100, 10_000} {
+	for _, count := range []int{100, MaxMigrationFiles} {
 		migrations, records := benchmarkHistory(b, count, count*3/4)
 		b.Run(fmt.Sprintf("migrations_%d", count), func(b *testing.B) {
 			b.ReportAllocs()
