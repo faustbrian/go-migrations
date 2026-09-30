@@ -225,9 +225,9 @@
         },
         "known_good_compatibility_sets": [],
         "delivery": {
-          "implementation": "verified",
-          "hardening": "verified",
-          "release": "verified"
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "in-progress"
         }
       },
       "gates": {
