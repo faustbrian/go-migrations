@@ -17,13 +17,13 @@ Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
 This source tree contains the `github.com/faustbrian/go-migrations/v2` module.
-V1.1.0 remains available at the original module path. Publish v2.0.0 only
-after its release gates and direct-consumer migration checks pass. The minimum
+V2.0.0 is published; v1.1.0 remains available at the original module path.
+Application adoption is a separate deployment boundary. The minimum
 supported and tested toolchain is Go 1.27.0.
 
 ## Install
 
-After the v2.0.0 tag is published, install the module with:
+Install the published module with:
 
 ```sh
 go get github.com/faustbrian/go-migrations/v2@v2.0.0
@@ -57,8 +57,7 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
-The v2 module uses these import paths. Public installation requires the
-v2.0.0 tag.
+The published v2 module uses these import paths.
 
 | Import path | Use |
 | --- | --- |
@@ -125,8 +124,13 @@ deadline, and inspect database and ledger state before retry after expiry.
 The runner starts no goroutines and has no `Close` or `Shutdown` method. The
 caller retains the source, observer, and `*sql.DB` and must close the database.
 Concurrent operations are serialized by the backend's advisory lock. An
-observer may be called concurrently when callers share a runner, must not block
-indefinitely, and never receives migration SQL; observer panics are contained.
+observer may be called concurrently when callers share a runner and never
+receives migration SQL; observer panics are contained. Observers are trusted
+synchronous callbacks and must perform bounded, nonblocking work. Honor the
+supplied context when applicable, including the caller's own finite bound for
+cleanup events whose context is detached from cancellation. The runner cannot
+preempt a blocked callback; a callback can delay lock release and the operation's
+return. Use a bounded, nonblocking application-owned handoff for slow exporters.
 
 ## Service migrate command
 
@@ -178,7 +182,7 @@ Read the [migration format](docs/migration-format.md),
 
 Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
-maintainer references. After publication, the v2
+maintainer references. The published v2
 [API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2),
 [executable example](examples/job/main.go), backend
 [testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance),

@@ -1,8 +1,8 @@
 # Compatibility
 
 The published v1 line remains available. This source contains the v2 line at
-`github.com/faustbrian/go-migrations/v2`; public installation requires a v2
-tag. The module follows semantic versioning, and root releases
+`github.com/faustbrian/go-migrations/v2`, published as v2.0.0.
+The module follows semantic versioning, and root releases
 use `v<version>` tags. Compatible defect and security fixes may be backported to
 a supported major; incompatible behavior requires a new major version and
 migration guidance in `CHANGELOG.md`.

@@ -12,6 +12,11 @@ Use a dedicated database role with only the DDL privileges the reviewed change
 requires. Protect connection strings through the platform secret mechanism and
 never include SQL or credentials in observers. The built-in events omit SQL
 and render database failures through stable redacted categories.
+Observers are trusted synchronous callbacks: keep their work bounded and
+nonblocking, or use an application-owned bounded nonblocking handoff. A blocked
+observer can delay migration completion and advisory-lock release; the runner
+cannot forcibly interrupt it. Cleanup events use a context detached from caller
+cancellation, so observer implementations need their own finite work bound.
 The role must be able to create and use `public.go_schema_migrations`; ledger
 queries explicitly qualify `public` and do not trust the connection's
 `search_path`.
@@ -47,9 +52,9 @@ capacity concern. Those risks require platform access controls, auditing,
 backups, and incident response rather than migration parsing.
 
 No known unowned Critical or High finding remains in the v2 source.
-The standard-library transaction and cleanup cancellation limitation is owned
-explicitly in the threat model. Publication requires release-gate and
-direct-consumer migration evidence.
+The standard-library transaction and cleanup cancellation limitation and trusted
+observer callback boundary are owned explicitly in the threat model. V2.0.0 is
+published; each application must separately validate its migration and deployment.
 
 Operational controls and compatibility constraints are documented in the
 [operations guide](operations.md) and [compatibility policy](compatibility.md).
