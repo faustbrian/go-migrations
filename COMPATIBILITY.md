@@ -6,8 +6,8 @@ versioned modules and do not use directory-prefixed tags. The v2 module uses
 the `/v2` module suffix without a version-specific source directory.
 
 The stable v1 contract is published from its original module path. This source
-contains the v2 contract at the `/v2` module path; public installation requires
-a v2 tag. Patch releases MUST remain backward
+contains the published v2.0.0 contract at the `/v2` module path.
+Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
 require a new major version. The latest patch in each supported major is the
 supported release for defect and security fixes.

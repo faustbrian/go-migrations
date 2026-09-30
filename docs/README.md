@@ -17,8 +17,8 @@ accepted risks for the v2 boundary.
 - [Executable deployment-job example](../examples/job/main.go)
 - [PostgreSQL integration](go-postgres.md)
 - [Architecture and engine contract](architecture.md)
-- [V2 API reference after publication](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2)
-- [V2 backend conformance helper after publication](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance)
+- [V2 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2)
+- [V2 backend conformance helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance)
 
 ## Operations
 

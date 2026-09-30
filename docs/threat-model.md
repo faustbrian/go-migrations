@@ -1,10 +1,10 @@
 # Threat model
 
-**Model version:** 1.1
+**Model version:** 1.2
 
 **Applies to:** `github.com/faustbrian/go-migrations/v2` source
 
-**Reviewed:** 2026-09-27
+**Reviewed:** 2026-09-30
 
 **Owner:** `go-migrations` maintainers
 
@@ -14,8 +14,9 @@ and release automation. The [security guidance](security.md) provides operator
 controls, and the repository [security policy](../SECURITY.md) defines private
 reporting.
 
-Released v1.1.0 retains its published behavior. Every v2 public release must
-pass its release gates and direct-consumer migration checks before publication.
+Released v1.1.0 retains its published behavior. V2.0.0 is published at the `/v2`
+module path. Future public releases require the applicable release and consumer
+checks; application deployment and adoption remain separate boundaries.
 
 ## Assets and required properties
 
@@ -29,7 +30,7 @@ pass its release gates and direct-consumer migration checks before publication.
 - Input-controlled CPU, memory, row counts, file counts, retries, waits, and
   database work must have explicit finite bounds.
 - Published v1 source, API, and persisted formats must remain available while
-  the incompatible secure defaults are prepared under `/v2`.
+  the incompatible secure defaults are available under `/v2`.
 
 ## Trust boundaries and attacker-controlled inputs
 
@@ -100,14 +101,16 @@ observers are separate caller-owned trust boundaries.
 - Observer events carry operation, phase, version, duration, and a redacted
   error. They never carry migration SQL, names, checksums, ledger rows, schema
   definitions, or connection strings.
+  Observers are trusted synchronous callbacks, not preemptible background work.
+  They must do bounded, nonblocking work; cleanup events have detached contexts.
 
 ## Open release-blocking findings
 
 No known unowned Critical or High finding remains in the v2 source.
 The context-free standard-library transaction and cleanup boundary is owned as
-MIGRATIONS-RISK-007. Publication requires release-gate and direct-consumer
-migration evidence; the v1-to-v2 adoption boundary is recorded in compatibility
-guidance.
+MIGRATIONS-RISK-007; synchronous observer work is owned as MIGRATIONS-RISK-008.
+V2.0.0 is published. The v1-to-v2 application adoption boundary is recorded in
+compatibility guidance and is not implied by publication.
 
 ## Accepted risks
 
@@ -119,6 +122,7 @@ guidance.
 | MIGRATIONS-RISK-004 | Administrators, other frameworks, or a compromised PostgreSQL server can mutate schema outside the package advisory lock. | Deploying application owners | The advisory lock coordinates this package's jobs but cannot authorize or serialize unrelated database actors. | Restrict database access, isolate deployment windows, compare schema fingerprints, audit DDL, and restore schema and ledger from one consistent backup. | Reassess when another migration system shares the database, database privileges change, or unexplained schema drift occurs. |
 | MIGRATIONS-RISK-006 | A database driver may allocate one hostile ledger or catalog field before the package can enforce its per-field and aggregate retention budgets. | Deploying application owners | `database/sql` transfers the current field before package code can validate its length; rejecting standard drivers would remove the supported database boundary. | Use a maintained driver, a trusted PostgreSQL endpoint, role and transport controls, server-side statement limits, and process memory limits. The package validates each scanned row before appending it and bounds primary operation work. | Reassess when adding a driver, accepting an untrusted database endpoint, after database-response memory exhaustion, or if `database/sql` adds bounded field reads. |
 | MIGRATIONS-RISK-007 | A PostgreSQL driver can block inside transaction commit, rollback, row close, or connection close after the surrounding context expires. | `go-migrations` maintainers and deploying operators | Go's standard `database/sql` commit, rollback, and cleanup APIs do not accept a context once driver cleanup begins; replacing the portable database boundary with driver-specific internals would weaken compatibility. | Use a maintained context-aware driver and finite PostgreSQL server and network timeouts, run migrations in a supervised process with a hard termination budget, and treat deadline expiry during transaction finalization as an uncertain outcome requiring database and ledger inspection before retry. | Reassess when `database/sql` adds context-aware finalization, supported drivers expose a portable bounded transaction API, a driver or network timeout fails to terminate cleanup, or an operation remains stuck past its supervisor budget. |
+| MIGRATIONS-RISK-008 | A trusted synchronous observer that blocks can delay operation return and advisory-lock release, including after caller cancellation. | Deploying application owners | The runner owns no observer goroutine and cannot safely preempt caller code; synchronous callbacks retain explicit caller ownership. | Keep callbacks bounded and nonblocking, honor their supplied context, apply an independent finite bound to detached cleanup events, and hand off slow exports through an application-owned bounded nonblocking queue. Supervise the migration process with a hard deadline. | Reassess when adding or changing an observer/exporter, if a callback exceeds its work budget, or when callback execution or cancellation ownership changes. |
 
 No accepted risk permits credentials, connection strings, migration SQL, raw
 ledger values, or schema definitions in default diagnostics.
