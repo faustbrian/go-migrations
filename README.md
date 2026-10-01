@@ -32,8 +32,8 @@ go get github.com/faustbrian/go-migrations/v3@v3.0.0
 
 Existing consumers can remain on published v1 or v2 releases. V2 consumers
 upgrade by replacing `/v2` with `/v3` in migration imports and stopping older
-runners before the database ledger is renamed. V1 consumers must also provide
-the bounded, cancellation-aware `SourceFileSystem` contract and review the
+runners and manually align the database ledger before starting v3. V1
+consumers must also provide the bounded, cancellation-aware `SourceFileSystem` contract and review the
 finite PostgreSQL timeout defaults. Laravel history must be relocated out of
 `public.migrations` before adoption; see the baseline runbook.
 

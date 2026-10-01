@@ -15,7 +15,7 @@ support and the removal is documented. The Go version is declared by `go.mod`.
 
 The pinned Goose version is an internal implementation constraint, not an
 application compatibility surface. Applications must not import Goose for
-migration runtime behavior. The immutable compatibility corpus records which
+migration runtime behavior. The compatibility corpus records which
 adapter version produced each fixture, while persisted ledger rows contain only
 the owned PostgreSQL contract identity.
 
@@ -26,22 +26,22 @@ and changes omitted PostgreSQL timeout options from unbounded behavior to finite
 defaults. Consumers upgrade by adding `/v2` to migrations
 imports, providing that source boundary, and reviewing the 30-second lock and
 five-minute statement budgets.
-`testdata/compatibility/v1` is the immutable persisted-contract upgrade anchor.
-Every future supported release line must retain this fixture and add a new
-fixture before changing the source format, checksum, or ledger contract. The
-real PostgreSQL matrix installs the historical schema and row, then proves the
-current package can plan and append work without rewriting history.
+`testdata/compatibility/v1` preserves v1 source identities, checksums, and
+persisted row formats, with the table name manually aligned to the v3 ledger.
+The original unaligned fixture remains available in published v1 and v2 tags.
+Add a new fixture before changing the source format, checksum, or row contract.
+The real PostgreSQL matrix installs the aligned schema and historical row,
+then proves the current package can plan and append without rewriting history.
 
 The adapter upgrade matrix currently executes the same unit and historical
 ledger contract against Goose `v3.26.0` and `v3.27.1`. Removing a version or
 adding a newer pin requires a changelog entry and a green persisted-ledger
 scenario before release.
 
-The ledger is now `public.migrations`; the legacy table is renamed in place
-on the first locked operation. Stop old runners before upgrading and resolve
-any conflicting `public.migrations` table first. Both names are excluded from
-schema fingerprints during transition. Historical v1 fixtures retain their
-original table name to verify automatic adoption without replay.
+The ledger is now only `public.migrations`. Stop old runners and manually
+align existing Go history before starting v3; no other table is recognized or
+excluded from schema fingerprints. Resolve any conflicting ownership first.
+The aligned v1 fixture proves row compatibility, not automatic table adoption.
 
 V3 consumers must replace `/v2` with `/v3` in Go imports. The Go API is
 otherwise unchanged from v2; the ledger rename and Laravel relocation

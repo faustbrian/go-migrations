@@ -270,28 +270,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		}
 	})
 
-	t.Run("conflicting ledger names fail without changing history", func(t *testing.T) {
-		database := isolatedDatabase(t, admin, connectionString, "ledger_collision")
-		ledgerSQL, err := os.ReadFile("../testdata/compatibility/v1/ledger.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := database.ExecContext(context.Background(), string(ledgerSQL)+"; CREATE TABLE public.migrations (id bigint)"); err != nil {
-			t.Fatal(err)
-		}
-		runner := newIntegrationRunner(t, database, fstest.MapFS{
-			"migrations/000002_next.sql": &fstest.MapFile{Data: []byte("-- +migrations Up\nSELECT 1;\n")},
-		})
-		if _, err := runner.Status(context.Background()); !errors.Is(err, migrationpostgres.ErrDatabaseOperationFailed) {
-			t.Fatalf("Status() error = %v, want ledger collision failure", err)
-		}
-		var count int
-		if err := database.QueryRowContext(context.Background(), "SELECT count(*) FROM public.go_schema_migrations").Scan(&count); err != nil || count != 1 {
-			t.Fatalf("historical rows = %d, error = %v, want untouched history", count, err)
-		}
-	})
-
-	t.Run("historical v1 ledger upgrades without rewriting history", func(t *testing.T) {
+	t.Run("aligned v1 history appends without rewriting rows", func(t *testing.T) {
 		database := isolatedDatabase(t, admin, connectionString, "historical_ledger")
 		ledgerSQL, err := os.ReadFile("../testdata/compatibility/v1/ledger.sql")
 		if err != nil {
@@ -304,7 +283,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		beforeRename, err := inspectionBackend.Inspect(context.Background())
+		beforeStatus, err := inspectionBackend.Inspect(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -327,13 +306,9 @@ func TestPostgresEngineConformance(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Status() error = %v", err)
 		}
-		afterRename, err := inspectionBackend.Inspect(context.Background())
-		if err != nil || beforeRename != afterRename {
-			t.Fatalf("ledger rename changed schema fingerprint: %v", err)
-		}
-		var legacyExists bool
-		if err := database.QueryRowContext(context.Background(), "SELECT to_regclass('public.go_schema_migrations') IS NOT NULL").Scan(&legacyExists); err != nil || legacyExists {
-			t.Fatalf("legacy ledger still exists = %v, error = %v", legacyExists, err)
+		afterStatus, err := inspectionBackend.Inspect(context.Background())
+		if err != nil || beforeStatus != afterStatus {
+			t.Fatalf("ledger preparation changed schema fingerprint: %v", err)
 		}
 		entries := status.Entries()
 		if len(entries) != 2 ||
