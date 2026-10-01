@@ -6,7 +6,8 @@ versioned modules and do not use directory-prefixed tags. The v3 module uses
 the `/v3` module suffix without a version-specific source directory.
 
 The stable v1 contract is published from its original module path. This source
-contains the v3.0.0 contract at the `/v3` module path. V2.0.0 remains
+prepares the compatible v3.0.1 patch at the `/v3` module path; v3.0.0 remains
+the latest published v3 release until that patch is published. V2.0.0 remains
 available with its original module path and ledger name.
 Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
