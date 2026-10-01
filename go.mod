@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/faustbrian/go-service v1.0.0
+	github.com/faustbrian/go-service v1.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/testcontainers/testcontainers-go v0.44.0
@@ -27,7 +27,7 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/faustbrian/go-cli v1.0.0 // indirect
-	github.com/faustbrian/go-correlation v1.0.0 // indirect
+	github.com/faustbrian/go-correlation v1.1.0 // indirect
 	github.com/faustbrian/go-identifier v1.0.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
