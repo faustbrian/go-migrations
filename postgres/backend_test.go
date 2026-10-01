@@ -30,7 +30,7 @@ func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
-	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
+	mock.ExpectExec("^" + regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := session.Prepare(context.Background()); err != nil {

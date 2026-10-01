@@ -89,12 +89,14 @@ combine a restored ledger with a newer schema or reconstruct rows by hand.
 
 ## Ledger name upgrade
 
-The owned ledger is `public.migrations`. On the first locked operation, an
-existing `public.go_schema_migrations` table is renamed in place, preserving
-rows, checksums, timestamps, constraints, and grants. The migration role must
-own the old table (or belong to its owning role) and have CREATE on `public`.
-Do not run older binaries
-after upgrading: they still target the old name. If both names exist, startup
-fails without merging or changing either history; resolve ownership before
-retrying. Existing Laravel history must be relocated before adoption as
-specified in the [baseline runbook](laravel-baseline.md).
+The owned ledger is `public.migrations`. Before upgrading, stop all older
+runners and manually rename the existing Go ledger to `migrations` in `public`,
+preserving its rows, constraints, indexes, and grants. Verify the existing
+history with status before executing migrations. V3 does not discover, rename,
+or read any other ledger table. Starting v3 before aligning the ledger would
+create an empty history and could replay already-applied migrations.
+
+Do not run older binaries after upgrading: they target a different table.
+Resolve any existing `public.migrations` ownership conflict before the manual
+rename; never merge histories. Existing Laravel history must be relocated first
+as specified in the [baseline runbook](laravel-baseline.md).

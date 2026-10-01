@@ -274,7 +274,7 @@ func (plan Plan) Steps() []Step
 type Record struct {
 	// Has unexported fields.
 }
-    Record is an immutable entry read from public.go_schema_migrations.
+    Record is an immutable entry read from the PostgreSQL migration ledger.
 
 func NewRecord(
 	kind RecordKind,

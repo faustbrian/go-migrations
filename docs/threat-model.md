@@ -138,10 +138,10 @@ diagnostic that exposes protected material.
 
 ## V3 ledger adoption
 
-V3 owns `public.migrations` and renames legacy history on the advisory-lock
-connection. If both ledger names exist, preparation fails without merging
-history. Stop older runners before adoption: they target the old table name.
-The role must own the legacy table to rename it. Laravel history must be
-relocated and its baseline fingerprint reviewed before Go adoption. This is an
-explicit application rollout boundary, not permission for automatic Laravel
+V3 owns only `public.migrations` and never discovers or renames another ledger.
+Stop older runners and manually align the existing Go ledger before starting
+v3. Otherwise, v3 can create an empty history and replay already-applied SQL.
+Resolve table ownership conflicts without merging histories. Laravel history
+must be relocated and its baseline fingerprint reviewed before Go adoption.
+This is an explicit application rollout boundary, not permission for automatic
 history mutation.

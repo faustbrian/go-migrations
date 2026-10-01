@@ -92,19 +92,8 @@ func databaseContextFailure(ctx context.Context, operation string, cause error) 
 	return failure
 }
 
-// Ledger adoption runs on the advisory-lock connection before any history reads.
-// Refuse ambiguous ownership rather than merge histories or replay migrations.
-const createLedgerSQL = `DO $ledger$
-BEGIN
-    IF to_regclass('public.go_schema_migrations') IS NOT NULL THEN
-        IF to_regclass('public.migrations') IS NOT NULL THEN
-            RAISE EXCEPTION 'both migration ledger names exist';
-        END IF;
-        ALTER TABLE public.go_schema_migrations RENAME TO migrations;
-    END IF;
-END
-$ledger$;
-CREATE TABLE IF NOT EXISTS public.migrations (
+// Ledger creation runs on the advisory-lock connection before any history reads.
+const createLedgerSQL = `CREATE TABLE IF NOT EXISTS public.migrations (
     version bigint PRIMARY KEY CHECK (version > 0),
     kind text NOT NULL CHECK (kind IN ('migration', 'baseline')),
     name text NOT NULL CHECK (name <> ''),
@@ -212,8 +201,8 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 	return backend, nil
 }
 
-// Prepare adopts the legacy ledger name or creates public.migrations on the
-// advisory-lock connection. Existing Laravel history must be relocated first.
+// Prepare creates public.migrations if absent on the advisory-lock connection.
+// Existing Laravel history must be relocated first.
 func (session *session) Prepare(ctx context.Context) error {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
