@@ -106,7 +106,7 @@
       "owned_dependencies": [
         "github.com/faustbrian/go-cli",
         "github.com/faustbrian/go-correlation",
-        "github.com/faustbrian/go-identifier",
+        "github.com/faustbrian/go-identifier/v2",
         "github.com/faustbrian/go-service"
       ],
       "reverse_owned_dependencies": [
