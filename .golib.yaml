@@ -16,7 +16,7 @@ api:
   baselines:
     - module: .
       mode: go-doc
-      path: api/v2.txt
+      path: api/v3.txt
       packages:
         - .
         - ./adapters/service

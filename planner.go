@@ -56,7 +56,7 @@ const (
 	MaxMigrationRecords = MaxMigrationFiles + 1
 )
 
-// Record is an immutable entry read from public.go_schema_migrations.
+// Record is an immutable entry read from public.migrations.
 type Record struct {
 	kind      RecordKind
 	version   Version

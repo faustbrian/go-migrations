@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func FuzzDecodeLedgerRecord(f *testing.F) {

@@ -7,8 +7,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/faustbrian/go-migrations/v2"
-	"github.com/faustbrian/go-migrations/v2/migrationsservice"
+	"github.com/faustbrian/go-migrations/v3"
+	"github.com/faustbrian/go-migrations/v3/migrationsservice"
 	"github.com/faustbrian/go-service"
 )
 

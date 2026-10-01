@@ -82,7 +82,19 @@ never crosses a baseline. It fails before execution if any selected migration
 has no `Down` section. Prefer a forward repair migration for destructive or
 widely deployed changes.
 
-For database restore, restore schema and `public.go_schema_migrations` from the
+For database restore, restore schema and `public.migrations` from the
 same consistent backup. Deploy the image containing the exact corresponding
 source history, run status, and compare checksums before any execution. Never
 combine a restored ledger with a newer schema or reconstruct rows by hand.
+
+## Ledger name upgrade
+
+The owned ledger is `public.migrations`. On the first locked operation, an
+existing `public.go_schema_migrations` table is renamed in place, preserving
+rows, checksums, timestamps, constraints, and grants. The migration role must
+own the old table (or belong to its owning role) and have CREATE on `public`.
+Do not run older binaries
+after upgrading: they still target the old name. If both names exist, startup
+fails without merging or changing either history; resolve ownership before
+retrying. Existing Laravel history must be relocated before adoption as
+specified in the [baseline runbook](laravel-baseline.md).

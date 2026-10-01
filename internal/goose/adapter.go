@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"errors"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 	pressly "github.com/pressly/goose/v3"
 )
 

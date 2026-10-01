@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 // ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a
@@ -47,7 +47,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
       AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-      AND NOT (n.nspname = 'public' AND c.relname = 'go_schema_migrations')
+      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
 
     UNION ALL
 
@@ -67,7 +67,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
 	  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
 	  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname = 'go_schema_migrations')
+      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
 
     UNION ALL
 
@@ -78,7 +78,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname = 'go_schema_migrations')
+      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
 
     UNION ALL
 
@@ -89,7 +89,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     JOIN pg_namespace n ON n.oid = tbl.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND tbl.relname = 'go_schema_migrations')
+      AND NOT (n.nspname = 'public' AND tbl.relname IN ('migrations', 'go_schema_migrations'))
 
     UNION ALL
 
@@ -101,7 +101,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     WHERE NOT t.tgisinternal
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname = 'go_schema_migrations')
+      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
 
     UNION ALL
 
@@ -258,7 +258,7 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	appliedAt := time.Now().UTC()
 	_, err = transaction.ExecContext(
 		operationCtx,
-		`INSERT INTO public.go_schema_migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`,
+		`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`,
 		baselineLedgerVersion(baseline),
 		"baseline",
 		baseline.Name(),

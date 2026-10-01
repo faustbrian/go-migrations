@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func TestLedgerAcceptsCompleteBoundedHistory(t *testing.T) {
@@ -26,7 +26,7 @@ func TestLedgerAcceptsCompleteBoundedHistory(t *testing.T) {
 	for version := 2; version <= wantRecords; version++ {
 		rows.AddRow("migration", version, "migration", checksum, appliedAt, appliedAt, 0, false)
 	}
-	mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(rows)
 	records, err := owned.Records(context.Background())
 	if err != nil || len(records) != wantRecords {
 		t.Fatalf("Records() count = %d, error = %v, want complete bounded history", len(records), err)

@@ -5,35 +5,37 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25_required-blue)](CONTRIBUTING.md#verification)
 [![Mutation](https://img.shields.io/badge/mutation-100%25_required-blue)](CONTRIBUTING.md#verification)
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v2.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v3.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
 [![Go](https://img.shields.io/badge/go-1.27.0-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `migrations` is an engine-neutral database migration runtime with a
 PostgreSQL backend. It owns migration identity, planning, status, locking,
-checksums, baselines, recovery, and the `public.go_schema_migrations` ledger.
+checksums, baselines, recovery, and the `public.migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
-This source tree contains the `github.com/faustbrian/go-migrations/v2` module.
-V2.0.0 is published; v1.1.0 remains available at the original module path.
+This source tree contains the `github.com/faustbrian/go-migrations/v3` module.
+V3.0.0 introduces the `public.migrations` ledger name. Published v1 and v2
+releases remain available under their original module paths.
 Application adoption is a separate deployment boundary. The minimum
 supported and tested toolchain is Go 1.27.0.
 
 ## Install
 
-Install the published module with:
+Install v3.0.0 once published with:
 
 ```sh
-go get github.com/faustbrian/go-migrations/v2@v2.0.0
+go get github.com/faustbrian/go-migrations/v3@v3.0.0
 ```
 
-Existing consumers can remain on released v1; do not use local `replace`
-directives to consume this checkout as v1. Upgrading requires adding `/v2` to
-every migrations import path, implementing the bounded and cancellation-aware
-`SourceFileSystem` contract, and reviewing the finite PostgreSQL timeout
-defaults. V2 preserves the persisted ledger format.
+Existing consumers can remain on published v1 or v2 releases. V2 consumers
+upgrade by replacing `/v2` with `/v3` in migration imports and stopping older
+runners before the database ledger is renamed. V1 consumers must also provide
+the bounded, cancellation-aware `SourceFileSystem` contract and review the
+finite PostgreSQL timeout defaults. Laravel history must be relocated out of
+`public.migrations` before adoption; see the baseline runbook.
 
 The supported Go and PostgreSQL versions are documented in
 [compatibility](docs/compatibility.md).
@@ -57,15 +59,15 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
-The published v2 module uses these import paths.
+The v3 module uses these import paths.
 
 | Import path | Use |
 | --- | --- |
-| `github.com/faustbrian/go-migrations/v2` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
-| `github.com/faustbrian/go-migrations/v2/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/v2/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
-| `github.com/faustbrian/go-migrations/v2/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
-| `github.com/faustbrian/go-migrations/v2/conformance` | Verify an alternative backend against the public engine contract in tests. |
+| `github.com/faustbrian/go-migrations/v3` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
+| `github.com/faustbrian/go-migrations/v3/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
+| `github.com/faustbrian/go-migrations/v3/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
+| `github.com/faustbrian/go-migrations/v3/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
+| `github.com/faustbrian/go-migrations/v3/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
 
@@ -145,7 +147,7 @@ it finishes or fails. A missing runner fails during plan construction. Use a
 dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or
 recovery behavior explicitly according to the reviewed operation.
 
-The v2 `migrationsservice` path is a deprecated compatibility facade for the
+The v3 `migrationsservice` path is a deprecated compatibility facade for the
 v1 API. It preserves generic signatures, named type identities, error
 sentinels and traversal, command semantics, and caller-owned runner and resource
 lifecycle while delegating to `adapters/service`.
@@ -171,7 +173,7 @@ lifecycle while delegating to `adapters/service`.
 - Explicit no-transaction migrations persist dirty state before executing SQL.
 - Dirty outcomes require a checksum-bound operator recovery decision.
 - Existing Laravel databases are adopted through an exact reviewed schema
-  fingerprint without reading or modifying Laravel's `migrations` table.
+  fingerprint after relocating Laravel history out of `public.migrations`.
 - Status, plans, records, events, and migration values are immutable snapshots.
 
 Read the [migration format](docs/migration-format.md),
@@ -182,10 +184,10 @@ Read the [migration format](docs/migration-format.md),
 
 Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
-maintainer references. The published v2
-[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2),
+maintainer references. The v3
+[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3),
 [executable example](examples/job/main.go), backend
-[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v2/conformance),
+[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3/conformance),
 [FAQ and troubleshooting](docs/faq.md), [performance baselines](docs/benchmarks.md),
 [compatibility policy](COMPATIBILITY.md), [changelog](CHANGELOG.md),
 [support guide](SUPPORT.md), and [private security-reporting process](SECURITY.md)

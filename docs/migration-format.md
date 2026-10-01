@@ -56,7 +56,7 @@ it has run; add a new migration.
 
 ## Owned ledger
 
-`public.go_schema_migrations` contains one row per Go migration or reviewed
+`public.migrations` contains one row per Go migration or reviewed
 baseline. Every ledger operation explicitly qualifies the `public` schema;
 the connection's `search_path` cannot redirect migration history:
 
@@ -73,7 +73,9 @@ the connection's `search_path` cannot redirect migration history:
 | `engine` / `engine_version` | Owned backend contract provenance |
 
 The package owns this schema. Applications must not write it directly. The
-Laravel `migrations` table and Goose tables are unrelated and untouched.
+Laravel history must be relocated before adoption because the Go ledger owns
+`public.migrations`; see the [baseline runbook](laravel-baseline.md). Goose
+tables are unrelated and untouched.
 Checksums are lowercase algorithm-qualified SHA-256 values; the all-zero value
 is reserved as the invalid/uninitialized sentinel and is rejected when parsed.
 Ledger reads also reject any dirty row with a completion time or clean row

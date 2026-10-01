@@ -3,6 +3,17 @@
 All notable changes are documented here. The project follows Keep a Changelog
 and Semantic Versioning.
 
+## 3.0.0 - 2026-10-01
+
+### Changed
+
+- Move the module to `github.com/faustbrian/go-migrations/v3`. Consumers
+  must update imports to `/v3` and stop older runners before upgrading.
+- Use `public.migrations` as the PostgreSQL ledger. Existing
+  `public.go_schema_migrations` history is renamed under the advisory lock;
+  conflicting ledger names fail closed. Stop older binaries before upgrading.
+  Relocate Laravel history before adoption and re-review its baseline.
+
 ## 2.0.0 - 2026-09-28
 
 ### Changed

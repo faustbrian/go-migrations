@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func TestReleaseDiscardsUncertainLockConnection(t *testing.T) {
@@ -317,7 +317,7 @@ func (connection *stateConnection) QueryContext(_ context.Context, query string,
 		}
 		connection.locked = false
 		return &stateRows{values: []driver.Value{true}}, nil
-	case strings.HasPrefix(query, "UPDATE public.go_schema_migrations"):
+	case strings.HasPrefix(query, "UPDATE public.migrations"):
 		if !connection.recoveryStartedAt.IsZero() {
 			finishedAt := args[0].Value.(time.Time)
 			duration := finishedAt.UnixMilli() - connection.recoveryStartedAt.UnixMilli()
