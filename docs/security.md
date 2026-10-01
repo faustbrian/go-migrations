@@ -55,7 +55,7 @@ backups, and incident response rather than migration parsing.
 No known unowned Critical or High finding remains in the v3 source.
 The standard-library transaction and cleanup cancellation limitation and trusted
 observer callback boundary are owned explicitly in the threat model. V3.0.0
-is prepared for release; each application must separately validate its
+is published; each application must separately validate its
 migration and deployment.
 
 Operational controls and compatibility constraints are documented in the
