@@ -24,10 +24,10 @@ supported and tested toolchain is Go 1.27.0.
 
 ## Install
 
-Install the published v3.0.0 release with:
+Install the published v3.0.1 release with:
 
 ```sh
-go get github.com/faustbrian/go-migrations/v3@v3.0.0
+go get github.com/faustbrian/go-migrations/v3@v3.0.1
 ```
 
 Existing consumers can remain on published v1 or v2 releases. V2 consumers
