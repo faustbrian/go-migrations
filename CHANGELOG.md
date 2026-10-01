@@ -5,6 +5,8 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 3.0.1 - 2026-10-01
+
 ### Changed
 
 - Adopt service 1.1.1 and its patched default UUID generator. Entropy
