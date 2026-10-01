@@ -7,6 +7,9 @@ and Semantic Versioning.
 
 ### Changed
 
+- Adopt service 1.1.1 and its patched default UUID generator. Entropy
+  failures retain generation classification without exposing reader
+  diagnostics through default correlation errors.
 - Update the internal Goose adapter dependency to 3.28. PostgreSQL
   migrations retain their caller-owned connections, transaction handling,
   locking, and `public.migrations` ledger.
