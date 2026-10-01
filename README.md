@@ -12,7 +12,7 @@
 
 `migrations` is an engine-neutral database migration runtime with a
 PostgreSQL backend. It owns migration identity, planning, status, locking,
-checksums, baselines, recovery, and the `public.go_schema_migrations` ledger.
+checksums, baselines, recovery, and the `public.migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
@@ -171,7 +171,7 @@ lifecycle while delegating to `adapters/service`.
 - Explicit no-transaction migrations persist dirty state before executing SQL.
 - Dirty outcomes require a checksum-bound operator recovery decision.
 - Existing Laravel databases are adopted through an exact reviewed schema
-  fingerprint without reading or modifying Laravel's `migrations` table.
+  fingerprint after relocating Laravel history out of `public.migrations`.
 - Status, plans, records, events, and migration values are immutable snapshots.
 
 Read the [migration format](docs/migration-format.md),

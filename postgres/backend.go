@@ -92,7 +92,19 @@ func databaseContextFailure(ctx context.Context, operation string, cause error) 
 	return failure
 }
 
-const createLedgerSQL = `CREATE TABLE IF NOT EXISTS public.go_schema_migrations (
+// Ledger adoption runs on the advisory-lock connection before any history reads.
+// Refuse ambiguous ownership rather than merge histories or replay migrations.
+const createLedgerSQL = `DO $ledger$
+BEGIN
+    IF to_regclass('public.go_schema_migrations') IS NOT NULL THEN
+        IF to_regclass('public.migrations') IS NOT NULL THEN
+            RAISE EXCEPTION 'both migration ledger names exist';
+        END IF;
+        ALTER TABLE public.go_schema_migrations RENAME TO migrations;
+    END IF;
+END
+$ledger$;
+CREATE TABLE IF NOT EXISTS public.migrations (
     version bigint PRIMARY KEY CHECK (version > 0),
     kind text NOT NULL CHECK (kind IN ('migration', 'baseline')),
     name text NOT NULL CHECK (name <> ''),
@@ -200,8 +212,8 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 	return backend, nil
 }
 
-// Prepare creates only the package-owned ledger on the advisory-lock
-// connection. It never reads or mutates Laravel's migrations table.
+// Prepare adopts the legacy ledger name or creates public.migrations on the
+// advisory-lock connection. Existing Laravel history must be relocated first.
 func (session *session) Prepare(ctx context.Context) error {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -327,7 +339,7 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 		return nil, ErrSessionReleased
 	}
 
-	rows, err := session.connection.QueryContext(operationCtx, "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.go_schema_migrations ORDER BY version ASC")
+	rows, err := session.connection.QueryContext(operationCtx, "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.migrations ORDER BY version ASC")
 	if err != nil {
 		return nil, databaseContextFailure(operationCtx, "query migration ledger", err)
 	}
@@ -476,7 +488,7 @@ func (session *session) Recover(
 		var durationMS int64
 		err := session.connection.QueryRowContext(
 			operationCtx,
-			`UPDATE public.go_schema_migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`,
+			`UPDATE public.migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`,
 			finishedAt,
 			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
@@ -507,7 +519,7 @@ func (session *session) Recover(
 		var durationMS int64
 		err := session.connection.QueryRowContext(
 			operationCtx,
-			`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+			`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
 			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
 			maximumDurationMilliseconds,
@@ -599,7 +611,7 @@ func (session *session) rollbackWithoutTransaction(
 	var durationMS int64
 	err = session.connection.QueryRowContext(
 		ctx,
-		`UPDATE public.go_schema_migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+		`UPDATE public.migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 		maximumDurationMilliseconds,
@@ -619,7 +631,7 @@ func (session *session) rollbackWithoutTransaction(
 	}
 	result, err := session.connection.ExecContext(
 		ctx,
-		`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = true`,
+		`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true`,
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	)
@@ -774,7 +786,7 @@ func insertDirty(
 ) error {
 	_, err := execer.ExecContext(
 		ctx,
-		`INSERT INTO public.go_schema_migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`,
+		`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`,
 		migrationLedgerVersion(migration),
 		"migration",
 		migration.Name(),
@@ -797,7 +809,7 @@ func markClean(
 ) error {
 	result, err := execer.ExecContext(
 		ctx,
-		`UPDATE public.go_schema_migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`,
+		`UPDATE public.migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`,
 		finishedAt,
 		duration.Milliseconds(),
 		migrationLedgerVersion(migration),
@@ -828,7 +840,7 @@ func deleteRecord(
 	var durationMS int64
 	err := queryer.QueryRowContext(
 		ctx,
-		`DELETE FROM public.go_schema_migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`,
+		`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`,
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	).Scan(&appliedAt, &durationMS)

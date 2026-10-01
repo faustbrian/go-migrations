@@ -3,6 +3,15 @@
 All notable changes are documented here. The project follows Keep a Changelog
 and Semantic Versioning.
 
+## Unreleased
+
+### Changed
+
+- Use `public.migrations` as the PostgreSQL ledger. Existing
+  `public.go_schema_migrations` history is renamed under the advisory lock;
+  conflicting ledger names fail closed. Stop older binaries before upgrading.
+  Relocate Laravel history before adoption and re-review its baseline.
+
 ## 2.0.0 - 2026-09-28
 
 ### Changed

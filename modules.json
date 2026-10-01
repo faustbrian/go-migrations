@@ -93,7 +93,7 @@
           "build_tags": []
         }
       ],
-      "purpose": "`migrations` is an engine-neutral database migration runtime with a PostgreSQL backend. It owns migration identity, planning, status, locking, checksums, baselines, recovery, and the `public.go_schema_migrations` ledger. Goose is an internal, pinned SQL execution detail and never appears in the public API.",
+      "purpose": "`migrations` is an engine-neutral database migration runtime with a PostgreSQL backend. It owns migration identity, planning, status, locking, checksums, baselines, recovery, and the `public.migrations` ledger. Goose is an internal, pinned SQL execution detail and never appears in the public API.",
       "lifecycle": "stable",
       "kind": "public library",
       "releasable": true,

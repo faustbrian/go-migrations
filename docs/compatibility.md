@@ -20,7 +20,7 @@ adapter version produced each fixture, while persisted ledger rows contain only
 the owned PostgreSQL contract identity.
 
 The published v1 line remains available at its original module path. The v2
-line preserves persisted formats but intentionally replaces plain `fs.FS`
+line preserves persisted row formats but intentionally replaces plain `fs.FS`
 source access with the cancellation-aware, bounded `SourceFileSystem` contract
 and changes omitted PostgreSQL timeout options from unbounded behavior to finite
 defaults. Consumers upgrade by adding `/v2` to migrations
@@ -36,3 +36,9 @@ The adapter upgrade matrix currently executes the same unit and historical
 ledger contract against Goose `v3.26.0` and `v3.27.1`. Removing a version or
 adding a newer pin requires a changelog entry and a green persisted-ledger
 scenario before release.
+
+The ledger is now `public.migrations`; the legacy table is renamed in place
+on the first locked operation. Stop old runners before upgrading and resolve
+any conflicting `public.migrations` table first. Both names are excluded from
+schema fingerprints during transition. Historical v1 fixtures retain their
+original table name to verify automatic adoption without replay.

@@ -1,7 +1,12 @@
 # Laravel-to-Go baseline runbook
 
 This procedure adopts an existing schema without replaying Laravel migrations.
-It never renames, reads, reuses, or mutates Laravel's `migrations` table.
+The Go ledger owns `public.migrations`. Before adoption, stop Laravel schema
+changes and relocate its history, for example with
+`ALTER TABLE public.migrations RENAME TO laravel_migrations;`. Configure any
+remaining Laravel tooling to use that archived name. The Go runtime does not
+rename or reuse Laravel history. Review the baseline fingerprint only after
+relocation; previously reviewed fingerprints must be regenerated.
 
 ## Review
 
@@ -28,7 +33,7 @@ it byte-for-byte, inserts one clean baseline row, and commits. Drift, existing
 owned history, concurrent changes, or duplicate execution fail closed.
 
 Afterward, verify one `kind='baseline'` row in
-`public.go_schema_migrations`, verify the Laravel table and row count are
+`public.migrations`, verify the Laravel table and row count are
 unchanged, run status, then apply later Go migrations normally.
 
 ## Rollback and disaster recovery
@@ -38,4 +43,4 @@ back. If baseline recording fails, correct drift or configuration and retry; do
 not insert a row manually. If an incorrect baseline was committed, stop all Go
 migration jobs and restore the database to a pre-baseline consistent backup or
 perform a separately reviewed ledger correction under incident procedure.
-Preserve the Laravel table throughout.
+Preserve the relocated Laravel table throughout.

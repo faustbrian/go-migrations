@@ -130,7 +130,7 @@ func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock, _ migrations.Migration) {
 				mock.ExpectBegin()
 				mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnError(fault)
+				mock.ExpectExec("INSERT INTO public.migrations").WillReturnError(fault)
 				mock.ExpectRollback()
 			},
 		},
@@ -139,7 +139,7 @@ func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock, migration migrations.Migration) {
 				mock.ExpectBegin()
 				mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(fault)
 				mock.ExpectRollback()
 			},
@@ -149,9 +149,9 @@ func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock, migration migrations.Migration) {
 				mock.ExpectBegin()
 				mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-				mock.ExpectExec("UPDATE public.go_schema_migrations").WillReturnError(fault)
+				mock.ExpectExec("UPDATE public.migrations").WillReturnError(fault)
 				mock.ExpectRollback()
 			},
 		},
@@ -160,9 +160,9 @@ func TestTransactionalApplyStopsAtEveryPersistenceBoundary(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock, migration migrations.Migration) {
 				mock.ExpectBegin()
 				mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-				mock.ExpectExec("UPDATE public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit().WillReturnError(fault)
 			},
 		},
@@ -193,7 +193,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 
 	t.Run("insert", func(t *testing.T) {
 		database, mock := faultDatabase(t)
-		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnError(fault)
+		mock.ExpectExec("INSERT INTO public.migrations").WillReturnError(fault)
 		if err := insertDirty(context.Background(), database, migration, now); !errors.Is(err, fault) {
 			t.Fatalf("insertDirty() error = %v", err)
 		}
@@ -211,7 +211,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 	} {
 		t.Run("complete "+test.name, func(t *testing.T) {
 			database, mock := faultDatabase(t)
-			expectation := mock.ExpectExec("UPDATE public.go_schema_migrations")
+			expectation := mock.ExpectExec("UPDATE public.migrations")
 			if test.err != nil {
 				expectation.WillReturnError(test.err)
 			} else {
@@ -235,7 +235,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 	} {
 		t.Run("delete "+test.name, func(t *testing.T) {
 			database, mock := faultDatabase(t)
-			expectation := mock.ExpectQuery("DELETE FROM public.go_schema_migrations")
+			expectation := mock.ExpectQuery("DELETE FROM public.migrations")
 			if test.err != nil {
 				expectation.WillReturnError(test.err)
 			} else {
@@ -256,7 +256,7 @@ func TestNoTransactionRollbackLeavesRecoverableDirtyRecordOnFailure(t *testing.T
 	session, mock := faultSession(t, 0)
 	migration := faultMigration(t, migrations.TransactionModeNone)
 	appliedAt := time.Now().UTC()
-	mock.ExpectQuery("UPDATE public.go_schema_migrations").
+	mock.ExpectQuery("UPDATE public.migrations").
 		WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 12))
 	mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnError(fault)
 
@@ -281,7 +281,7 @@ func TestBackendAndLockFailuresAreExplicit(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	prepareSession, prepareMock := faultSession(t, 0)
-	prepareMock.ExpectExec("CREATE TABLE IF NOT EXISTS public.go_schema_migrations").WillReturnError(fault)
+	prepareMock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnError(fault)
 	if err := prepareSession.Prepare(context.Background()); !errors.Is(err, fault) {
 		t.Fatalf("Prepare() error = %v, want injected fault", err)
 	}
@@ -570,7 +570,7 @@ func TestRetainedDatabaseResultsEnforceTextAndObjectBounds(t *testing.T) {
 		session, mock := faultSession(t, 0)
 		migration := faultMigration(t, migrations.TransactionModeDefault)
 		now := time.Now().UTC()
-		mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations").WillReturnRows(
+		mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(
 			sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).
 				AddRow("migration", 1, strings.Repeat("x", MaxLedgerBytes+1), migration.Checksum().String(), now, now, 1, false),
 		)
@@ -610,7 +610,7 @@ func TestSessionRecordsCoversSuccessAndDriverFailures(t *testing.T) {
 	appliedAt := time.Now().UTC()
 	t.Run("success", func(t *testing.T) {
 		session, mock := faultSession(t, 0)
-		mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations").WillReturnRows(
+		mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(
 			sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).
 				AddRow("baseline", 100, "baseline", migration.Checksum().String(), appliedAt, appliedAt, 0, false).
 				AddRow("migration", 101, "migration", migration.Checksum().String(), appliedAt, appliedAt, 1, false),
@@ -633,7 +633,7 @@ func TestSessionRecordsCoversSuccessAndDriverFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session, mock := faultSession(t, 0)
-			expectation := mock.ExpectQuery("SELECT (.+) FROM public.go_schema_migrations")
+			expectation := mock.ExpectQuery("SELECT (.+) FROM public.migrations")
 			if test.err != nil {
 				expectation.WillReturnError(test.err)
 			} else {
@@ -672,9 +672,9 @@ func TestRecoveryPersistenceOutcomes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session, mock := faultSession(t, 0)
-			query := "UPDATE public.go_schema_migrations"
+			query := "UPDATE public.migrations"
 			if test.action == migrations.RecoveryMarkRolledBack {
-				query = "DELETE FROM public.go_schema_migrations (.+) execution_time_ms BETWEEN 0 AND \\$3"
+				query = "DELETE FROM public.migrations (.+) execution_time_ms BETWEEN 0 AND \\$3"
 			}
 			expectation := mock.ExpectQuery(query)
 			if test.action == migrations.RecoveryMarkRolledBack {
@@ -740,14 +740,14 @@ func TestTransactionalRollbackStopsAtEveryPersistenceBoundary(t *testing.T) {
 			mock.ExpectBegin()
 			mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectQuery("DELETE FROM public.go_schema_migrations").WillReturnError(fault)
+			mock.ExpectQuery("DELETE FROM public.migrations").WillReturnError(fault)
 			mock.ExpectRollback()
 		}},
 		{name: "invalid duration", target: migrations.ErrInvalidRecord, setup: func(mock sqlmock.Sqlmock) {
 			mock.ExpectBegin()
 			mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectQuery("DELETE FROM public.go_schema_migrations").WillReturnRows(
+			mock.ExpectQuery("DELETE FROM public.migrations").WillReturnRows(
 				sqlmock.NewRows([]string{"finished_at", "execution_time_ms"}).AddRow(appliedAt, math.MaxInt64/int64(time.Millisecond)+1),
 			)
 			mock.ExpectRollback()
@@ -756,7 +756,7 @@ func TestTransactionalRollbackStopsAtEveryPersistenceBoundary(t *testing.T) {
 			mock.ExpectBegin()
 			mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectQuery("DELETE FROM public.go_schema_migrations").WillReturnRows(
+			mock.ExpectQuery("DELETE FROM public.migrations").WillReturnRows(
 				sqlmock.NewRows([]string{"finished_at", "execution_time_ms"}).AddRow(appliedAt, 1),
 			)
 			mock.ExpectCommit().WillReturnError(fault)
@@ -793,7 +793,7 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 
 	t.Run("dirty insert", func(t *testing.T) {
 		session, mock := faultSession(t, 0)
-		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnError(fault)
+		mock.ExpectExec("INSERT INTO public.migrations").WillReturnError(fault)
 		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, ErrDatabaseOperationFailed) || !errors.Is(err, fault) {
 			t.Fatalf("Apply() error = %v, want redacted database failure", err)
 		}
@@ -802,9 +802,9 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 
 	t.Run("clean update", func(t *testing.T) {
 		session, mock := faultSession(t, 0)
-		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec("UPDATE public.go_schema_migrations").WillReturnError(fault)
+		mock.ExpectExec("UPDATE public.migrations").WillReturnError(fault)
 		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, fault) {
 			t.Fatalf("Apply() error = %v", err)
 		}
@@ -813,9 +813,9 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		session, mock := faultSession(t, 0)
-		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec("UPDATE public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		record, err := session.Apply(context.Background(), migration)
 		if err != nil || record.Version() != migration.Version() {
 			t.Fatalf("Apply() = %#v, %v", record, err)
@@ -826,7 +826,7 @@ func TestNoTransactionApplyPersistenceOutcomes(t *testing.T) {
 	t.Run("timeout reset", func(t *testing.T) {
 		session, mock := faultSession(t, time.Second)
 		mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(fault)
 		mock.ExpectExec("RESET statement_timeout").WillReturnError(errors.New("reset failed"))
 		if _, err := session.Apply(context.Background(), migration); !errors.Is(err, migrations.ErrExecutionFailed) ||
@@ -852,33 +852,33 @@ func TestNoTransactionRollbackPersistenceOutcomes(t *testing.T) {
 	}{
 		{name: "timeout", setup: func(mock sqlmock.Sqlmock) { mock.ExpectExec("set_config").WillReturnError(fault) }},
 		{name: "missing", setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}))
 		}},
 		{name: "mark dirty", setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnError(fault)
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnError(fault)
 		}},
 		{name: "invalid duration", target: migrations.ErrInvalidRecord, setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, math.MaxInt64/int64(time.Millisecond)+1))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, math.MaxInt64/int64(time.Millisecond)+1))
 		}},
 		{name: "delete", setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec("DELETE FROM public.go_schema_migrations").WillReturnError(fault)
+			mock.ExpectExec("DELETE FROM public.migrations").WillReturnError(fault)
 		}},
 		{name: "delete result", setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec("DELETE FROM public.go_schema_migrations").WillReturnResult(sqlmock.NewErrorResult(fault))
+			mock.ExpectExec("DELETE FROM public.migrations").WillReturnResult(sqlmock.NewErrorResult(fault))
 		}},
 		{name: "conflict", setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec("DELETE FROM public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec("DELETE FROM public.migrations").WillReturnResult(sqlmock.NewResult(0, 0))
 		}},
 		{name: "success", ok: true, setup: func(mock sqlmock.Sqlmock) {
-			mock.ExpectQuery("UPDATE public.go_schema_migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
+			mock.ExpectQuery("UPDATE public.migrations").WillReturnRows(sqlmock.NewRows([]string{"started_at", "execution_time_ms"}).AddRow(appliedAt, 1))
 			mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec("DELETE FROM public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("DELETE FROM public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 		}},
 	}
 	for _, test := range tests {
@@ -1018,7 +1018,7 @@ func TestBaselineStopsAtEveryPersistenceBoundary(t *testing.T) {
 			mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").WillReturnRows(
 				sqlmock.NewRows([]string{"object_identity", "definition"}).AddRow(objects[0].Identity, objects[0].Definition),
 			)
-			mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnError(fault)
+			mock.ExpectExec("INSERT INTO public.migrations").WillReturnError(fault)
 			mock.ExpectRollback()
 		}},
 		{name: "commit", setup: func(mock sqlmock.Sqlmock) {
@@ -1026,7 +1026,7 @@ func TestBaselineStopsAtEveryPersistenceBoundary(t *testing.T) {
 			mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").WillReturnRows(
 				sqlmock.NewRows([]string{"object_identity", "definition"}).AddRow(objects[0].Identity, objects[0].Definition),
 			)
-			mock.ExpectExec("INSERT INTO public.go_schema_migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectCommit().WillReturnError(fault)
 		}},
 	}
