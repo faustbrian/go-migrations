@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func TestDatabaseFailureRedactsDriverDiagnosticByDefault(t *testing.T) {

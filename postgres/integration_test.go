@@ -18,9 +18,9 @@ import (
 	"testing/fstest"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
-	"github.com/faustbrian/go-migrations/v2/conformance"
-	migrationpostgres "github.com/faustbrian/go-migrations/v2/postgres"
+	migrations "github.com/faustbrian/go-migrations/v3"
+	"github.com/faustbrian/go-migrations/v3/conformance"
+	migrationpostgres "github.com/faustbrian/go-migrations/v3/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"

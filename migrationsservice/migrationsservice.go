@@ -1,6 +1,6 @@
 // Package migrationsservice preserves the released service-adapter path.
 //
-// Deprecated: use github.com/faustbrian/go-migrations/v2/adapters/service.
+// Deprecated: use github.com/faustbrian/go-migrations/v3/adapters/service.
 package migrationsservice
 
 import (
@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
-	canonical "github.com/faustbrian/go-migrations/v2/adapters/service"
+	migrations "github.com/faustbrian/go-migrations/v3"
+	canonical "github.com/faustbrian/go-migrations/v3/adapters/service"
 	service "github.com/faustbrian/go-service"
 )
 

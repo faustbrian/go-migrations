@@ -1,4 +1,4 @@
-package migrations // import "github.com/faustbrian/go-migrations/v2"
+package migrations // import "github.com/faustbrian/go-migrations/v3"
 
 Package migrations provides engine-neutral database migration contracts.
 
@@ -316,7 +316,7 @@ func (plan Plan) Steps() []Step
 type Record struct {
 	// Has unexported fields.
 }
-    Record is an immutable entry read from public.go_schema_migrations.
+    Record is an immutable entry read from public.migrations.
 
 func NewRecord(
 	kind RecordKind,
@@ -568,7 +568,7 @@ type Version uint64
 func (version Version) String() string
     String returns the canonical unpadded decimal representation.
 
-package migrationsservice // import "github.com/faustbrian/go-migrations/v2/adapters/service"
+package migrationsservice // import "github.com/faustbrian/go-migrations/v3/adapters/service"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
 service migrate command.
@@ -650,7 +650,7 @@ func (err *OptionsError) Unwrap() error
 type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, error)
     Prepare constructs only the resources needed by the migrate role.
 
-package conformance // import "github.com/faustbrian/go-migrations/v2/conformance"
+package conformance // import "github.com/faustbrian/go-migrations/v3/conformance"
 
 Package conformance provides the reusable behavioral test suite every migration
 backend must pass without depending on its execution engine.
@@ -680,11 +680,11 @@ type Harness struct {
     subtests. Exec is used only to remove reviewed partial effects before an
     explicit rolled-back recovery decision.
 
-package migrationsservice // import "github.com/faustbrian/go-migrations/v2/migrationsservice"
+package migrationsservice // import "github.com/faustbrian/go-migrations/v3/migrationsservice"
 
 Package migrationsservice preserves the released service-adapter path.
 
-Deprecated: use github.com/faustbrian/go-migrations/v2/adapters/service.
+Deprecated: use github.com/faustbrian/go-migrations/v3/adapters/service.
 
 VARIABLES
 
@@ -756,7 +756,7 @@ func (err *OptionsError) Unwrap() error
 type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, error)
     Prepare constructs only the resources needed by the migrate role.
 
-package postgres // import "github.com/faustbrian/go-migrations/v2/postgres"
+package postgres // import "github.com/faustbrian/go-migrations/v3/postgres"
 
 Package postgres implements the owned PostgreSQL ledger and lock backend.
 

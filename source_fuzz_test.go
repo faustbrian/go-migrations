@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func FuzzFSSource(f *testing.F) {

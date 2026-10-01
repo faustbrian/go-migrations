@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
-	gooseadapter "github.com/faustbrian/go-migrations/v2/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v3"
+	gooseadapter "github.com/faustbrian/go-migrations/v3/internal/goose"
 )
 
 const (

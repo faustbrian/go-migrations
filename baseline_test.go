@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations/v2"
+	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
 func TestRunnerBaselineRecordsReviewedFingerprintWithoutReplayingMigrations(t *testing.T) {
