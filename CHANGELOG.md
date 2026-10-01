@@ -3,6 +3,18 @@
 All notable changes are documented here. The project follows Keep a Changelog
 and Semantic Versioning.
 
+## Unreleased
+
+### Changed
+
+- Select pgx 5.11 for the PostgreSQL driver. Review connection strings for
+  its libpq-compatible parsing changes and date/time scans for stricter
+  PostgreSQL range validation. Text-decoded `timestamptz` values now use
+  `ScanLocation` or the local time zone; their instants remain unchanged.
+- Applications sharing the pgx dependency must add `TypeMap` to custom
+  `pgx.Rows` implementations, including mocks. The migrations API continues
+  to accept caller-owned `database/sql` connections.
+
 ## 3.0.0 - 2026-10-01
 
 ### Changed
