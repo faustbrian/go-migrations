@@ -1,4 +1,4 @@
-CREATE TABLE public.go_schema_migrations (
+CREATE TABLE public.migrations (
     version bigint PRIMARY KEY CHECK (version > 0),
     kind text NOT NULL CHECK (kind IN ('migration', 'baseline')),
     name text NOT NULL CHECK (name <> ''),
@@ -21,7 +21,7 @@ CREATE TABLE historical_widgets (
     code text NOT NULL
 );
 
-INSERT INTO public.go_schema_migrations (
+INSERT INTO public.migrations (
     version,
     kind,
     name,

@@ -47,7 +47,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
       AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
+      AND NOT (n.nspname = 'public' AND c.relname = 'migrations')
 
     UNION ALL
 
@@ -67,7 +67,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
 	  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
 	  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
+      AND NOT (n.nspname = 'public' AND c.relname = 'migrations')
 
     UNION ALL
 
@@ -78,7 +78,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
+      AND NOT (n.nspname = 'public' AND c.relname = 'migrations')
 
     UNION ALL
 
@@ -89,7 +89,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     JOIN pg_namespace n ON n.oid = tbl.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND tbl.relname IN ('migrations', 'go_schema_migrations'))
+      AND NOT (n.nspname = 'public' AND tbl.relname = 'migrations')
 
     UNION ALL
 
@@ -101,7 +101,7 @@ const schemaObjectsSQL = `WITH schema_objects AS (
     WHERE NOT t.tgisinternal
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname !~ '^pg_toast'
-      AND NOT (n.nspname = 'public' AND c.relname IN ('migrations', 'go_schema_migrations'))
+      AND NOT (n.nspname = 'public' AND c.relname = 'migrations')
 
     UNION ALL
 

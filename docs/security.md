@@ -19,8 +19,8 @@ cannot forcibly interrupt it. Cleanup events use a context detached from caller
 cancellation, so observer implementations need their own finite work bound.
 The role must be able to create and use `public.migrations`; ledger
 queries explicitly qualify `public` and do not trust the connection's
-`search_path`. Automatic legacy-ledger adoption also requires ownership of
-the old table (or membership in its owning role) and CREATE on `public`.
+`search_path`. Existing deployments must align their ledger manually before
+starting v3; the runner never discovers or renames another table.
 
 The parser rejects ambiguous filenames, directives, encodings, unrelated
 entries, and oversized files. The planner fails closed on history divergence.

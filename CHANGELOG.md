@@ -9,10 +9,10 @@ and Semantic Versioning.
 
 - Move the module to `github.com/faustbrian/go-migrations/v3`. Consumers
   must update imports to `/v3` and stop older runners before upgrading.
-- Use `public.migrations` as the PostgreSQL ledger. Existing
-  `public.go_schema_migrations` history is renamed under the advisory lock;
-  conflicting ledger names fail closed. Stop older binaries before upgrading.
-  Relocate Laravel history before adoption and re-review its baseline.
+- Use only `public.migrations` as the PostgreSQL ledger. Stop older binaries
+  and manually align existing Go history before starting v3; other table names
+  are neither discovered nor renamed. Starting with an unaligned ledger can
+  replay migrations. Relocate Laravel history first and re-review its baseline.
 
 ## 2.0.0 - 2026-09-28
 
