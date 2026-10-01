@@ -4,9 +4,9 @@
 
 The latest published `v1` and `v2` releases receive security fixes. The `v2`
 line is published as `v2.0.0` at `github.com/faustbrian/go-migrations/v2`.
-V3 is prepared at `github.com/faustbrian/go-migrations/v3`; support begins
-when v3.0.0 is published. Supported release lines are listed here and in the
-compatibility documentation.
+The `v3` line is published and supported as `v3.0.0` at
+`github.com/faustbrian/go-migrations/v3`. Supported release lines are listed
+here and in the compatibility documentation.
 
 ## Reporting a vulnerability
 
