@@ -7,6 +7,9 @@ and Semantic Versioning.
 
 ### Changed
 
+- Update the internal Goose adapter dependency to 3.28. PostgreSQL
+  migrations retain their caller-owned connections, transaction handling,
+  locking, and `public.migrations` ledger.
 - Select pgx 5.11 for the PostgreSQL driver. Review connection strings for
   its libpq-compatible parsing changes and date/time scans for stricter
   PostgreSQL range validation. Text-decoded `timestamptz` values now use
