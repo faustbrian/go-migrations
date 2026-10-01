@@ -1,9 +1,8 @@
 # Compatibility
 
 The published v1 and v2 lines remain available. This source contains the v3
-line at `github.com/faustbrian/go-migrations/v3`, preparing the compatible
-v3.0.1 patch. V3.0.0 remains the latest published v3 release until that patch
-is published.
+line at `github.com/faustbrian/go-migrations/v3`. The compatible v3.0.1 patch
+is the latest published v3 release.
 The module follows semantic versioning, and root releases
 use `v<version>` tags. Compatible defect and security fixes may be backported to
 a supported major; incompatible behavior requires a new major version and
