@@ -5,6 +5,8 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 3.0.2 - 2026-10-07
+
 ### Changed
 
 - Adopt correlation 1.1.2 for the migration service dependency boundary.
