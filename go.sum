@@ -37,8 +37,8 @@ github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/faustbrian/go-cli v1.0.0 h1:K+hYLS572nR/tz/zqkyjN7RT6wa96Ln710Fp1azj2tU=
 github.com/faustbrian/go-cli v1.0.0/go.mod h1:pvGIf3RUGkGjlA7oJwPdTuWkH/lLWgQjroJZEhkrZMM=
-github.com/faustbrian/go-correlation v1.1.1 h1:Waq5affEOsGzYnqBZofZWNJgjP+3sP2QogAQaF7FThU=
-github.com/faustbrian/go-correlation v1.1.1/go.mod h1:iZpD2BdUdQl1F/j4ORQ414W5+2ElMURk4ivcax4dLWk=
+github.com/faustbrian/go-correlation v1.1.2 h1:G8J8OCihwgYf9eNzmTbt8790q277b7bOb9q3+TGB4iw=
+github.com/faustbrian/go-correlation v1.1.2/go.mod h1:rzJzNfqfY8DEBD8/qCEGSu9mtCSmNvTcMBABz9wMyn0=
 github.com/faustbrian/go-identifier/v2 v2.0.0 h1:of6lfuAlyWzW0nDWW3gdzHu65nSZ79LYZwgrIb5E1GM=
 github.com/faustbrian/go-identifier/v2 v2.0.0/go.mod h1:dfno42Fhe7wvGOXKwBNWO4Y0hSHi5a98RbmeB98ASVw=
 github.com/faustbrian/go-service v1.1.1 h1:MltDluJqsGkubYI0JIeUjCUIBkIsjUbUhvi4apO1cC8=
