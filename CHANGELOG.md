@@ -8,6 +8,8 @@ and Semantic Versioning.
 ### Changed
 
 - Adopt correlation 1.1.2 for the migration service dependency boundary.
+- Adopt service 1.1.2 and its maintenance snapshot security patch.
+  Migration adapter APIs and one-shot lifecycle behavior remain unchanged.
 
 ## 3.0.1 - 2026-10-01
 
