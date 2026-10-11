@@ -20,21 +20,35 @@ permissions:
 
 jobs:
   ci:
-    uses: faustbrian/go-library-tools/.github/workflows/library-ci.yml@c7f232472d9c4c5ac5359d70bbef3b8f1571b834 # reviewed security maintenance source
+    uses: faustbrian/go-library-tools/.github/workflows/library-ci.yml@eff8b2127c361ee2f422123824a1d337cc277ac4 # qualified public v2.1.1 source
     with:
-      tooling_sha: c7f232472d9c4c5ac5359d70bbef3b8f1571b834
-      source_bootstrap: true
+      tooling_sha: eff8b2127c361ee2f422123824a1d337cc277ac4
+      source_bootstrap: false
       public_dependencies: true
       release_dry_run: ${{ inputs.release_dry_run || false }}
+
+  engine-boundary:
+    name: Engine boundary
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preserve owned API and ledger boundary
+        run: ./scripts/check-engine-boundary.sh
 
   required:
     name: Required
     if: always()
-    needs: ci
+    needs: [ci, engine-boundary]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require shared workflow
         env:
           CI_RESULT: ${{ needs.ci.result }}
-        run: test "${CI_RESULT}" = success
+          ENGINE_RESULT: ${{ needs.engine-boundary.result }}
+        run: test "${CI_RESULT}" = success && test "${ENGINE_RESULT}" = success

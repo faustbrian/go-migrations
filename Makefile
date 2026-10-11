@@ -1,14 +1,28 @@
 GOLIB ?= golib
 
-.PHONY: check ci cohesion inventory repository-check
+.PHONY: check check-full ci cohesion inventory repository-check specification-check specification-check-online engine-boundary
 
 check:
+	./scripts/check-engine-boundary.sh
+	$(GOLIB) check --local --all
+
+check-full:
 	$(GOLIB) check --all
 
 ci:
 	$(GOLIB) repository check
 	$(GOLIB) cohesion check
-	$(GOLIB) check --all
+	./scripts/check-engine-boundary.sh
+	$(GOLIB) check --local --all
+
+engine-boundary:
+	./scripts/check-engine-boundary.sh
+
+specification-check:
+	$(GOLIB) specification check
+
+specification-check-online:
+	$(GOLIB) specification check --online
 
 cohesion:
 	$(GOLIB) cohesion check

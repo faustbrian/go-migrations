@@ -3,7 +3,7 @@
 [![CI](https://github.com/faustbrian/go-migrations/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/faustbrian/go-migrations/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/badge/CodeQL-required-blue)](https://github.com/faustbrian/go-migrations/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-100%25_required-blue)](CONTRIBUTING.md#verification)
-[![Mutation](https://img.shields.io/badge/mutation-100%25_required-blue)](CONTRIBUTING.md#verification)
+[![Mutation](https://img.shields.io/badge/mutation-full%2Frelease-blue)](CONTRIBUTING.md#verification)
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v3.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
@@ -20,7 +20,7 @@ This source tree contains the `github.com/faustbrian/go-migrations/v3` module.
 V3.0.0 introduces the `public.migrations` ledger name. Published v1 and v2
 releases remain available under their original module paths.
 Application adoption is a separate deployment boundary. The minimum
-supported and tested toolchain is Go 1.27.0.
+supported toolchain is Go 1.27.0; verification uses Go 1.27.2.
 
 ## Install
 
@@ -196,6 +196,18 @@ cover the remaining adoption paths.
 For ecosystem-wide selection and ownership guidance, see the versioned
 [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
 and its [Persistence and durability family](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection).
+
+## Development
+
+`make check` and `make ci` use the published tool pinned in `.golib.yaml` for
+bounded verification with PostgreSQL fixtures, the `integration` tag and
+deterministic operation-gate cancellation/session-ownership assertions. The
+unchanged cheap engine-boundary guard remains required locally and in CI.
+Base-free checks run fuzz seeds; changed-source CI selects active smoke.
+`make check-full` retains all explicit full campaigns. Scheduled CI uses the
+shared bounded route. See [contributor verification](CONTRIBUTING.md#verification)
+for standalone tests, public installation, disposable-cache sessions and
+explicit release rehearsal; local gate tests do not prove live PostgreSQL locks.
 
 ## License
 
