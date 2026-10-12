@@ -1,15 +1,15 @@
 GOLIB ?= golib
 
-.PHONY: check check-full ci cohesion inventory repository-check specification-check specification-check-online engine-boundary
+.PHONY: source-docs-check check check-full ci cohesion inventory repository-check specification-check specification-check-online engine-boundary
 
-check:
+check: source-docs-check
 	./scripts/check-engine-boundary.sh
 	$(GOLIB) check --local --all
 
-check-full:
+check-full: source-docs-check
 	$(GOLIB) check --all
 
-ci:
+ci: source-docs-check
 	$(GOLIB) repository check
 	$(GOLIB) cohesion check
 	./scripts/check-engine-boundary.sh
@@ -29,3 +29,6 @@ cohesion:
 
 inventory repository-check:
 	$(GOLIB) repository check
+
+source-docs-check:
+	$(GOLIB) source-docs check

@@ -169,3 +169,12 @@ online checks were deliberately not run for this Tier A pass. All three exact
 owned Go caches, helper and rendered copies were removed; historical evidence
 was retained. Final changed-content secret and complete-diff inspection belong
 to the local commit handoff, not database or hosted-CI proof.
+
+## Objective Enforcement
+
+The checksum-pinned public Tools v2.4.0 verifier now supplies
+`make source-docs-check` as a prerequisite of the existing local and CI Make
+routes. Ordinary shared CI selects strict source-documentation checking and
+requires its result. Native prerequisites, operation budgets, security and
+release controls are retained. Hosted exact-head evidence is recorded by the
+coordination ledger; configuration alone does not establish green delivery.
