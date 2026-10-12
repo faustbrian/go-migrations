@@ -6,9 +6,9 @@ import "errors"
 type RecoveryAction uint8
 
 const (
-	// RecoveryMarkApplied certifies that the migration's full up SQL is present.
+	// RecoveryMarkApplied asserts that the operator verified all up SQL effects.
 	RecoveryMarkApplied RecoveryAction = iota + 1
-	// RecoveryMarkRolledBack certifies that all partial effects were removed.
+	// RecoveryMarkRolledBack asserts that the operator removed all partial effects.
 	RecoveryMarkRolledBack
 )
 
@@ -33,7 +33,9 @@ type Recovery struct {
 	action   RecoveryAction
 }
 
-// NewRecovery validates an explicit dirty-state resolution request.
+// NewRecovery validates a nonzero version/checksum and recognized action; it
+// does not inspect SQL effects or enforce the signed ledger version ceiling.
+// Runner.Recover must still match this identity to its validated source.
 func NewRecovery(version Version, checksum Checksum, action RecoveryAction) (Recovery, error) {
 	if version == 0 || checksum == (Checksum{}) ||
 		(action != RecoveryMarkApplied && action != RecoveryMarkRolledBack) {
@@ -49,7 +51,7 @@ func (recovery Recovery) Version() Version { return recovery.version }
 // Checksum returns the reviewed source checksum.
 func (recovery Recovery) Checksum() Checksum { return recovery.checksum }
 
-// Action returns the operator's verified outcome.
+// Action returns the operator's asserted outcome, not a runtime verification.
 func (recovery Recovery) Action() RecoveryAction { return recovery.action }
 
 // RecoveryResult is the persisted outcome of resolving one dirty migration.

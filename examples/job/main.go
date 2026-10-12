@@ -1,4 +1,8 @@
-// Command job runs embedded migrations as a dedicated deployment task.
+// Command job runs embedded migrations as a dedicated deployment task with a
+// caller-owned database and immutable compiler-embedded source. It needs a
+// disposable/reviewed PostgreSQL target and DATABASE_URL; it is not run as a
+// package example. Deployment supervision, privilege review and recovery are
+// application obligations, not guarantees from a successful process exit.
 package main
 
 import (
@@ -83,6 +87,9 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+// Compiler-owned files are already immutable and bounded by the application
+// artifact. fs helpers materialize before checking size and cannot interrupt
+// arbitrary I/O; do not copy this adapter for an untrusted network/disk source.
 type embeddedSourceFileSystem struct {
 	files embed.FS
 }
@@ -135,6 +142,9 @@ func (filesystem embeddedSourceFileSystem) ReadFile(
 	return contents, ctx.Err()
 }
 
+// This example logs only fixed backend formatting. Do not unwrap driver causes
+// or reuse this logger with arbitrary source/backend errors containing secrets.
+// Log output is synchronous and still needs a supervised finite process bound.
 type logObserver struct{}
 
 func (logObserver) Observe(_ context.Context, event migrations.Event) {

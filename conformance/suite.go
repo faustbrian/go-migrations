@@ -1,5 +1,9 @@
 // Package conformance provides the reusable behavioral test suite every
 // migration backend must pass without depending on its execution engine.
+// Run uses caller-provided isolated databases and SQL; it creates no database
+// itself. The suite tests public runner outcomes, not complete crash, driver,
+// cancellation, security or supported-database qualification. Backend owners
+// retain those integration/fault obligations (docs/engine-replacement.md).
 package conformance
 
 import (
@@ -19,14 +23,23 @@ import (
 // subtests. Exec is used only to remove reviewed partial effects before an
 // explicit rolled-back recovery decision.
 type Harness struct {
-	NewRunner            func(*testing.T, fstest.MapFS) *migrations.Runner
-	Exec                 func(*testing.T, string)
-	TransactionalUp      string
-	TransactionalDown    string
-	NoTransactionUp      string
-	NoTransactionDown    string
+	// NewRunner constructs a usable runner for this subtest and registers resource cleanup.
+	NewRunner func(*testing.T, fstest.MapFS) *migrations.Runner
+	// Exec executes reviewed cleanup SQL in the subtest database and fails t on error.
+	Exec func(*testing.T, string)
+	// TransactionalUp is valid transactional up SQL for an observable schema effect.
+	TransactionalUp string
+	// TransactionalDown reverses TransactionalUp for rollback assertions.
+	TransactionalDown string
+	// NoTransactionUp is valid no-transaction up SQL compatible with TransactionalUp.
+	NoTransactionUp string
+	// NoTransactionDown reverses NoTransactionUp.
+	NoTransactionDown string
+	// TransactionalFailure is SQL that fails transactionally without surviving effects.
 	TransactionalFailure string
+	// NoTransactionFailure fails after leaving observable partial effects.
 	NoTransactionFailure string
+	// RemovePartialEffects fully removes NoTransactionFailure effects before recovery.
 	RemovePartialEffects string
 }
 
@@ -253,6 +266,8 @@ func Run(t *testing.T, harness Harness) {
 	})
 }
 
+// This helper reads immutable fstest.MapFS fixtures. Whole-file fs helpers
+// materialize before checking limits and are not a network/disk provider model.
 type sourceFileSystem struct {
 	files fs.FS
 }

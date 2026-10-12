@@ -67,7 +67,10 @@ type Record struct {
 	dirty     bool
 }
 
-// NewRecord validates data crossing the owned-ledger boundary.
+// NewRecord validates kind, signed-ledger-range version, canonical name,
+// nonzero checksum/time and nonnegative duration. It preserves the supplied
+// timestamp and dirty flag; history ordering, baseline placement and source
+// agreement are separately checked by planners and status builders.
 func NewRecord(
 	kind RecordKind,
 	version Version,
@@ -110,7 +113,8 @@ func (record Record) Name() string { return record.name }
 // Checksum returns the persisted migration or schema fingerprint.
 func (record Record) Checksum() Checksum { return record.checksum }
 
-// AppliedAt returns when execution or baseline recording completed.
+// AppliedAt returns the persisted record time. PostgreSQL uses completion time
+// for clean records and attempt start time for dirty records.
 func (record Record) AppliedAt() time.Time { return record.appliedAt }
 
 // Duration returns the measured operation duration.
@@ -140,7 +144,10 @@ type Plan struct {
 func (plan Plan) Steps() []Step { return append([]Step(nil), plan.steps...) }
 
 // PlanUp validates the complete persisted history and returns pending
-// migrations in ascending version order. Any ambiguity fails closed.
+// migrations in ascending version order. Any ambiguity fails closed. Inputs
+// must be strictly ordered, within MaxMigrationFiles/MaxMigrationRecords and
+// form an unchanged clean source prefix above any baseline. It performs no I/O
+// and does not retain the caller's slices.
 func PlanUp(available []Migration, records []Record) (Plan, error) {
 	if err := validateAvailableOrder(available); err != nil {
 		return Plan{}, err
@@ -205,7 +212,9 @@ func PlanUp(available []Migration, records []Record) (Plan, error) {
 }
 
 // PlanDown validates the complete persisted history and returns exactly count
-// rollback steps in descending version order. It never crosses a baseline.
+// rollback steps in descending version order. Count must be positive and fit
+// the applied history; every selected migration must have down SQL. It never
+// crosses a baseline or proves that down SQL restores the original schema.
 func PlanDown(available []Migration, records []Record, count uint64) (Plan, error) {
 	if count == 0 {
 		return Plan{}, ErrInvalidTarget

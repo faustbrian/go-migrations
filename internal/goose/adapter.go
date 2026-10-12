@@ -1,4 +1,9 @@
-// Package goose contains the replaceable, hidden Goose execution adapter.
+// Package goose contains the replaceable, hidden Goose execution adapter pinned
+// by go.mod. It translates validated migrations without parsing source files or
+// owning ledger history. Transactions remain caller-owned; no-transaction SQL
+// runs directly on the leased lock connection rather than an unrelated pool
+// connection. Execution errors retain only stable/context classifications.
+// See adapter_internal_test.go for the lock-connection bypass guard.
 package goose
 
 import (
@@ -18,8 +23,11 @@ type executionError struct {
 	classification error
 }
 
+// Error reports the stable execution classification, never SQL or driver text.
 func (*executionError) Error() string { return migrations.ErrExecutionFailed.Error() }
 
+// Unwrap exposes classification and context cancellation only; the original
+// execution cause is discarded, unlike PostgreSQL operation-error causes.
 func (err *executionError) Unwrap() []error {
 	if err.classification == nil {
 		return []error{migrations.ErrExecutionFailed}

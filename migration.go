@@ -1,4 +1,20 @@
-// Package migrations provides engine-neutral database migration contracts.
+// Package migrations loads immutable SQL histories, validates checksum-bound
+// ledger state, and coordinates plans, execution, baselines and dirty recovery.
+// Construct a Source and Backend, then use NewRunner for database operations;
+// PlanUp, PlanDown and BuildStatus are database-independent validation helpers.
+//
+// Each runner operation loads source before acquiring a backend session and
+// validates that loaded history against the locked ledger. Callers must keep
+// deployment sources immutable; the database lock does not freeze a filesystem.
+// The runner borrows its dependencies, starts no goroutines and does not close
+// the caller's database. Shared sources, backends and observers must support
+// the concurrency with which callers invoke them.
+//
+// SQL is trusted deployment code, not a sandboxed or authorized request. A
+// checksum detects identity changes; it is neither a signature nor proof that
+// SQL is safe or reversible. Recovery records an operator-reviewed assertion,
+// not an automatic inspection or repair of database effects. See the owned v1
+// format in docs/migration-format.md and lifecycle in docs/operations.md.
 package migrations
 
 import (
@@ -13,10 +29,12 @@ import (
 	"unicode/utf8"
 )
 
-// Version is the immutable, monotonically increasing migration identifier.
+// Version is a numeric migration identity. NewMigration, NewBaseline and
+// NewRecord accept only 1 through the maximum signed 64-bit integer; source and
+// ledger histories must be strictly increasing, not necessarily contiguous.
 type Version uint64
 
-// String returns the canonical unpadded decimal representation.
+// String returns unpadded decimal text without validating the version.
 func (version Version) String() string {
 	return strconv.FormatUint(uint64(version), 10)
 }
@@ -26,10 +44,10 @@ func (version Version) String() string {
 type TransactionMode uint8
 
 const (
-	// TransactionModeDefault executes the migration atomically.
+	// TransactionModeDefault requests one transaction for SQL and ledger writes.
 	TransactionModeDefault TransactionMode = iota
 	// TransactionModeNone permits operations PostgreSQL cannot run in a
-	// transaction. A failed migration in this mode requires explicit recovery.
+	// transaction. An unresolved dirty outcome requires explicit recovery.
 	TransactionModeNone
 )
 
@@ -52,19 +70,21 @@ var (
 
 var migrationNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*$`)
 
-// Checksum is the SHA-256 digest of the canonical migration representation.
+// Checksum is a SHA-256 digest used for migration identity or a package-defined
+// schema fingerprint. Its zero value is invalid for persisted contracts.
 type Checksum struct {
 	sha256 [sha256.Size]byte
 }
 
-// ChecksumData computes the stable SHA-256 representation of canonical bytes.
-// It is intended for package-defined contracts such as schema fingerprints;
-// migration identity uses its stricter built-in canonical representation.
+// ChecksumData hashes the supplied bytes with SHA-256 without normalization,
+// validation or authentication. Callers define any canonical framing; migration
+// identity instead uses the built-in versioned, byte-length-prefixed format.
 func ChecksumData(canonical []byte) Checksum {
 	return Checksum{sha256: sha256.Sum256(canonical)}
 }
 
-// ParseChecksum decodes the stable ledger representation of a checksum.
+// ParseChecksum accepts exactly sha256: followed by 64 lowercase hexadecimal
+// digits, rejecting the all-zero digest. Other spellings are not normalized.
 func ParseChecksum(value string) (Checksum, error) {
 	const prefix = "sha256:"
 
@@ -111,7 +131,13 @@ type Migration struct {
 	checksum        Checksum
 }
 
-// NewMigration validates and constructs a canonical migration.
+// NewMigration validates identity, transaction mode and UTF-8, NUL-free SQL
+// totaling at most 16 MiB. Names contain lowercase ASCII letters/digits with
+// single separating underscores and at most MaxMigrationNameBytes bytes.
+// Up SQL must not be blank; empty down SQL denotes irreversibility, whereas
+// nonempty whitespace-only down SQL is rejected. SQL bytes and line endings are
+// preserved, not parsed for grammar or normalized before the v1 checksum.
+// Unlike FSSource file validation, this constructor does not reject a BOM.
 func NewMigration(
 	version Version,
 	name string,
@@ -170,7 +196,7 @@ func (migration Migration) TransactionMode() TransactionMode {
 	return migration.transactionMode
 }
 
-// UpSQL returns the canonical forward SQL.
+// UpSQL returns the exact validated forward SQL, including whitespace.
 func (migration Migration) UpSQL() string { return migration.upSQL }
 
 // DownSQL returns the canonical rollback SQL, or an empty string when the

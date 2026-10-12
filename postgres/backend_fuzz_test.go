@@ -7,6 +7,8 @@ import (
 	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
+// Successful decoding must preserve representable ledger values exactly;
+// malformed identity/duration inputs may be rejected without panicking.
 func FuzzDecodeLedgerRecord(f *testing.F) {
 	f.Add(
 		"migration",

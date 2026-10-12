@@ -23,15 +23,21 @@ advisory-lock acquisition, five minutes for each migration statement, and ten
 minutes for primary work in each session or schema-inspection operation. That
 budget includes waiting for another caller to release serialized session
 ownership. Best-effort statement-timeout restoration and lock release use
-separate positive finite cleanup budgets of at most 30 seconds each. Use
+separate positive finite cleanup budgets of 30 seconds by default;
+`WithUnlockTimeout` can replace the runner release budget. Use
 `WithLockTimeout`, `WithStatementTimeout`, and
 `WithOperationTimeout` when reviewed work needs different finite budgets.
 Overrides must remain positive, and statement and operation timeouts must be at
 least one millisecond; zero cannot silently disable a bound. No-transaction
 execution restores the database-
 or role-level timeout after each attempt. Lock polling respects cancellation.
-Transactional cancellation rolls back both SQL and ledger. No-transaction
-cancellation can leave partial effects and therefore leaves a dirty record.
+Transactional cancellation before commit attempts to roll back SQL and ledger;
+commit/finalization errors can have uncertain outcomes. No-transaction
+cancellation after dirty marking can leave partial effects and a dirty record.
+Failure before marking may leave no row, while timeout-restoration or lock-release
+failure may follow already completed SQL and clean/deleted ledger state. Inspect
+state before retrying: an error is not evidence that nothing committed, and
+Runner results include only successful acknowledgements before the failed step.
 Loss of the lock-owning connection releases PostgreSQL advisory ownership; the
 failed operation still returns an error, and a later job must reacquire the lock
 and revalidate complete history before retrying or recovering.
@@ -58,8 +64,10 @@ honor operation contexts and return at most 4,096 migrations and 4,097 records.
 
 Use `Runner.Plan` immediately before a change window and inspect every step.
 Use `Runner.Status` for baseline, applied, dirty, and pending state. Both calls
-take the same lock as execution, so they are consistent snapshots, but state may
-change after the call returns.
+take the same lock as execution and validate loaded source against locked
+ledger state. Source is loaded before acquisition and must remain an immutable
+deployment artifact. Both calls can create the owned ledger, and neither
+reserves state for a later execution call.
 
 ## Dirty recovery
 
@@ -72,7 +80,9 @@ SQL and database catalog, then choose one outcome:
   identity.
 
 Recovery locks, revalidates source and ledger, requires exactly the matching
-dirty row, and persists the decision. If the outcome is uncertain, do nothing
+dirty row, and persists the decision without checking or executing SQL effects.
+MarkRolledBack returns the dirty record removed; MarkApplied returns its new
+clean record. If the outcome is uncertain, do nothing
 until it is proven.
 
 ## Rollback and disaster recovery

@@ -15,6 +15,10 @@ relocation; previously reviewed fingerprints must be regenerated.
 3. Call `postgres.Backend.InspectObjects` against a production-like clone.
 4. Review the canonical object list for tables, columns, constraints, indexes,
    triggers, policies, domain/enum types, functions, and extensions.
+   This is a selected catalog view, not a complete schema/security inventory:
+   review grants, ownership, RLS enabled/forced flags, policy roles and other
+   omitted properties separately. Neither inspection method acquires the
+   migration advisory lock; quiescing unrelated DDL remains an operator duty.
 5. Call `Inspect` and record the lowercase fingerprint in reviewed source or
    deployment configuration. Treat a changed fingerprint as a new review.
 6. Create the first Go migration with a strictly greater version.
@@ -29,8 +33,10 @@ no historical Laravel migrations and no Go migration at or below the baseline.
 
 Run `Runner.Baseline` in the dedicated migration Job. Under the advisory lock it
 opens a serializable transaction, recomputes the schema fingerprint, compares
-it byte-for-byte, inserts one clean baseline row, and commits. Drift, existing
-owned history, concurrent changes, or duplicate execution fail closed.
+it byte-for-byte, inserts one clean baseline row, and commits. Represented
+drift, existing owned history and duplicate execution are rejected; the advisory
+lock does not prevent unrelated writers or detect omitted schema properties.
+A commit or cleanup error requires inspection before assuming no baseline exists.
 
 Afterward, verify one `kind='baseline'` row in
 `public.migrations`, verify the Laravel table and row count are

@@ -26,7 +26,11 @@ engine types must never cross the root public boundary.
 
 Structured `Event` values contain operation, phase, version, duration, and an
 error. SQL is deliberately excluded. Adapters may translate events to logging
-or telemetry without influencing execution; observer panics are contained.
+or telemetry; observer panics are contained, but synchronous callbacks can
+block execution or cleanup. Custom dependency errors are retained and may carry
+sensitive data even though there is no SQL field; do not log unwrapped driver
+causes. Source loading precedes locking, so this is not an atomic
+filesystem/database snapshot.
 
 `database/sql` integration avoids a dependency on a specific pool wrapper.
 Applications using `postgres` should expose its underlying `*sql.DB` to the

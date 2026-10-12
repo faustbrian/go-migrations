@@ -1,4 +1,19 @@
-// Package postgres implements the owned PostgreSQL ledger and lock backend.
+// Package postgres implements the public.migrations ledger and connection-bound
+// advisory-lock backend for migrations.Runner. New borrows a caller-owned
+// *sql.DB; it does not open, close or migrate the database at construction.
+// Acquire owns one leased connection until Release. Cooperating jobs in the
+// same database share a stable lock; unrelated schema writers are not excluded.
+//
+// Transactional SQL and ledger changes use one transaction per migration.
+// Nontransactional execution persists dirty state first; unresolved dirty
+// outcomes require explicit operator review/recovery. An error during commit or timeout cleanup
+// can follow durable changes; inspect state before retrying. Finite contexts
+// bound cooperative work, not context-free database/sql finalizers.
+//
+// Default PostgreSQL operation formatting hides driver diagnostics, but error
+// traversal may expose the original cause. Schema inspection returns sensitive
+// definitions and covers only selected catalog properties, not a security audit.
+// See docs/operations.md and docs/threat-model.md (risks 003, 006 and 007).
 package postgres
 
 import (
@@ -20,7 +35,8 @@ const (
 	// MaxLedgerRecords permits one baseline plus the complete bounded migration
 	// source while preventing a hostile ledger from growing retained state.
 	MaxLedgerRecords = migrations.MaxMigrationFiles + 1
-	// MaxLedgerBytes bounds aggregate text retained from one ledger read.
+	// MaxLedgerBytes bounds aggregate kind/name/checksum text retained from one
+	// ledger read, not allocations made by the driver before each scan.
 	MaxLedgerBytes = 16 << 20
 	// Literal nanoseconds keep these safety budgets indivisible while retaining
 	// their exact documented durations.
@@ -54,10 +70,13 @@ type databaseError struct {
 	cause     error
 }
 
+// Error returns only the fixed operation and classification, not the cause.
 func (err *databaseError) Error() string {
 	return err.operation + ": " + ErrDatabaseOperationFailed.Error()
 }
 
+// Format keeps even expanded formatting redacted; quoted formatting quotes
+// Error text without inspecting the driver cause.
 func (err *databaseError) Format(state fmt.State, verb rune) {
 	if verb == 'q' {
 		_, _ = fmt.Fprintf(state, "%q", err.Error())
@@ -68,6 +87,8 @@ func (err *databaseError) Format(state fmt.State, verb rune) {
 	_, _ = fmt.Fprint(state, err.Error())
 }
 
+// Unwrap exposes the classification and original driver cause to errors.Is/As.
+// This is an explicit sensitive-diagnostic boundary, not a redacted cause chain.
 func (err *databaseError) Unwrap() []error {
 	return []error{ErrDatabaseOperationFailed, err.cause}
 }
@@ -107,11 +128,12 @@ const createLedgerSQL = `CREATE TABLE IF NOT EXISTS public.migrations (
     CHECK ((dirty AND finished_at IS NULL) OR (NOT dirty AND finished_at IS NOT NULL))
 )`
 
-// Option configures a PostgreSQL backend.
+// Option configures a PostgreSQL backend during construction only.
 type Option func(*Backend) error
 
 // WithLockRetryInterval controls polling when another job owns the advisory
-// lock. Cancellation is always honored while waiting.
+// lock. Interval must be positive; the default is 100 milliseconds. Context
+// cancellation interrupts the timer between unsuccessful contention attempts.
 func WithLockRetryInterval(interval time.Duration) Option {
 	return func(backend *Backend) error {
 		if interval <= 0 {
@@ -176,7 +198,11 @@ type Backend struct {
 	operationTimeout  time.Duration
 }
 
-// New constructs the PostgreSQL backend without taking ownership of database.
+// New constructs the backend without invoking database itself or taking its
+// ownership. Caller options run left-to-right until a nil/failing option; repeated
+// settings use the last value. Defaults are 30-second acquisition, five-minute
+// statement and ten-minute primary-operation timeouts. The caller closes the
+// database after all sessions finish and must not mutate options during use.
 func New(database *sql.DB, options ...Option) (*Backend, error) {
 	if database == nil {
 		return nil, ErrInvalidConfig
@@ -220,7 +246,10 @@ func (session *session) Prepare(ctx context.Context) error {
 }
 
 // Acquire waits for the stable package advisory lock on one physical
-// connection and returns all subsequent operations bound to that connection.
+// connection and returns all subsequent session operations bound to it. Its
+// lock timeout includes pool acquisition and polling. Database failures are not
+// retried; uncertain lock-query failures discard the physical connection.
+// A successful caller must Release the session even after operation failure.
 func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error) {
 	if backend == nil || backend.database == nil {
 		return nil, ErrInvalidConfig
@@ -296,6 +325,8 @@ func (gate operationGate) acquire(ctx context.Context) (func(), error) {
 	}
 }
 
+// The gate owns released/tainted state and the leased connection for the whole
+// operation. Timeout includes waiting for this ownership, not just SQL time.
 func (session *session) beginOperation(
 	ctx context.Context,
 ) (context.Context, func(), error) {
@@ -318,6 +349,8 @@ func (session *session) beginOperation(
 	}, nil
 }
 
+// Records reads ordered history with bounded retained count/text, validating
+// durations and clean/dirty completion consistency before returning values.
 func (session *session) Records(ctx context.Context) ([]migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -410,6 +443,8 @@ func boundedOperationContext(ctx context.Context, timeout time.Duration) (contex
 	return context.WithTimeout(ctx, timeout)
 }
 
+// Apply commits one migration under its transaction policy. A timeout-reset
+// error can accompany already completed nontransactional SQL and a clean row.
 func (session *session) Apply(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -433,6 +468,8 @@ func (session *session) Apply(ctx context.Context, migration migrations.Migratio
 	return session.applyWithoutTransaction(operationCtx, adapter, migration, startedAt)
 }
 
+// Rollback removes one clean row after down SQL under its transaction policy.
+// Nontransactional execution marks it dirty before SQL, not after a failure.
 func (session *session) Rollback(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -457,6 +494,8 @@ func (session *session) Rollback(ctx context.Context, migration migrations.Migra
 }
 
 // Recover persists an explicit operator-reviewed dirty outcome atomically.
+// It changes only the checksum-matched dirty ledger row, without inspecting or
+// executing migration SQL. MarkRolledBack returns the removed dirty record.
 func (session *session) Recover(
 	ctx context.Context,
 	migration migrations.Migration,
@@ -743,6 +782,9 @@ func (session *session) setSessionStatementTimeout(ctx context.Context) error {
 	return nil
 }
 
+// Restore database/role policy, not a caller's prior session-specific override.
+// Detach cleanup from cancellation; uncertainty taints the connection so Release
+// discards it even if advisory unlock succeeds.
 func (session *session) resetSessionStatementTimeout(ctx context.Context) error {
 	if session.statementTimeout == 0 {
 		return nil
@@ -914,6 +956,10 @@ func migrationLedgerVersion(migration migrations.Migration) int64 {
 	return int64(migration.Version())
 }
 
+// Release waits for operation ownership before touching the connection. If
+// canceled while waiting it leaves the active session intact. Once owned, it
+// attempts unlock, returns healthy connections to the pool and discards tainted
+// or uncertain ones. A repeated release returns ErrSessionReleased, not success.
 func (session *session) Release(ctx context.Context) error {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {

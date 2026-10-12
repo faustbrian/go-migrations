@@ -33,7 +33,11 @@ const (
 // SchemaObject is one canonical PostgreSQL catalog identity and definition.
 // Objects are sorted during fingerprinting, so database row order is irrelevant.
 type SchemaObject struct {
-	Identity   string
+	// Identity is a unique, nonempty catalog key of at most
+	// MaxSchemaObjectIdentityBytes; fingerprinting does not normalize its bytes.
+	Identity string
+	// Definition is nonempty catalog text of at most
+	// MaxSchemaObjectDefinitionBytes. It can contain sensitive SQL or literals.
 	Definition string
 }
 
@@ -146,7 +150,12 @@ const schemaObjectsSQL = `WITH schema_objects AS (
 SELECT object_identity, definition FROM schema_objects
 ORDER BY object_identity, definition`
 
-// Fingerprint hashes a complete, unambiguous PostgreSQL schema snapshot.
+// Fingerprint hashes supplied catalog objects using the v1 schema framing:
+// sorted unique identities and byte-length-prefixed, unnormalized definitions.
+// It bounds object count/field/aggregate bytes and rejects empty or duplicate
+// identities and empty definitions. It copies the slice before sorting and
+// accepts an empty inventory. It does not query a database, verify completeness,
+// validate SQL/encoding, authenticate the input or check security properties.
 func Fingerprint(objects []SchemaObject) (migrations.Checksum, error) {
 	if len(objects) > MaxSchemaObjects {
 		return migrations.Checksum{}, ErrResourceLimit
@@ -190,8 +199,9 @@ func Fingerprint(objects []SchemaObject) (migrations.Checksum, error) {
 	return migrations.ChecksumData([]byte(builder.String())), nil
 }
 
-// Inspect returns the current schema fingerprint for review and baseline
-// contract generation. It does not mutate either migration ledger.
+// Inspect returns a fingerprint of the package-selected catalog query using a
+// separate leased connection, without taking the migration advisory lock or
+// changing the ledger. It does not freeze concurrent DDL for a later Baseline.
 func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error) {
 	if backend == nil || backend.database == nil {
 		return migrations.Checksum{}, ErrInvalidConfig
@@ -208,8 +218,15 @@ func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error
 	return inspectSchema(operationCtx, connection)
 }
 
-// InspectObjects returns the canonical catalog objects used for review and
-// fingerprint diagnostics. The package-owned ledger is excluded.
+// InspectObjects returns selected catalog identities/definitions for review,
+// excluding the package-owned ledger. The caller owns the returned slice; text
+// can contain sensitive SQL/literals and should not enter routine diagnostics.
+// It does not take the advisory lock. The query includes relations, columns,
+// constraints, indexes, triggers, selected policy expressions, enum/domain types,
+// functions and extension versions, but not role grants/ownership, policy role
+// targets, RLS enabled/forced flags, row contents or all PostgreSQL properties.
+// A matching fingerprint therefore does not certify the whole schema/security
+// state; review those omitted properties separately before adoption.
 func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, error) {
 	if backend == nil || backend.database == nil {
 		return nil, ErrInvalidConfig
@@ -226,6 +243,9 @@ func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, err
 	return inspectObjects(operationCtx, connection)
 }
 
+// Baseline compares the selected catalog fingerprint and inserts its row in
+// one serializable transaction. The runner checks an empty owned history; the
+// advisory lock does not require unrelated DDL writers to cooperate.
 func (session *session) Baseline(ctx context.Context, baseline migrations.Baseline) (migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {

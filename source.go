@@ -56,8 +56,13 @@ var migrationFilenamePattern = regexp.MustCompile(
 )
 
 // Source loads a complete immutable migration history. Implementations must
-// honor the supplied context and return at most MaxMigrationFiles entries.
+// honor the supplied context, return at most MaxMigrationFiles entries in
+// strictly increasing version order, and keep returned data stable during use.
+// Runner retains source errors without removing their causes; custom sources
+// must keep their own diagnostics safe.
 type Source interface {
+	// Load returns a complete history or an error, not a usable partial history.
+	// It runs before the runner acquires the database lock.
 	Load(context.Context) ([]Migration, error)
 }
 
@@ -87,22 +92,29 @@ type SourceDirectoryLimits struct {
 // ErrInvalidEncoding for exceeded budgets, and a private implementation error
 // for other failures; FSSource redacts those private errors as ErrInvalidSource.
 type SourceFileSystem interface {
+	// ReadDir returns the complete directory inventory, including unrelated
+	// entries for FSSource to reject. It must bound metadata before retention.
 	ReadDir(ctx context.Context, root string, limits SourceDirectoryLimits) ([]SourceEntry, error)
+	// ReadFile returns at most maxBytes of stable file content, enforcing the
+	// bound before retaining it and closing any provider-owned file handles.
 	ReadFile(ctx context.Context, name string, maxBytes int) ([]byte, error)
 }
 
 // FSSource loads canonical SQL migrations from one cancellation-aware source
 // directory and rejects unrelated entries so packaging mistakes fail closed.
+// It borrows the provider and does not freeze directory/file reads into an
+// atomic snapshot. Use immutable deployment artifacts, not a changing directory.
 type FSSource struct {
 	fs      SourceFileSystem
 	root    string
 	timeout time.Duration
 }
 
-// FSSourceOption configures a filesystem source.
+// FSSourceOption configures a filesystem source during construction only.
 type FSSourceOption func(*FSSource) error
 
-// WithSourceTimeout replaces the finite default complete-load timeout.
+// WithSourceTimeout replaces the ten-minute complete-load timeout with a
+// positive duration. This bounds cooperative provider work, not arbitrary code.
 func WithSourceTimeout(timeout time.Duration) FSSourceOption {
 	return func(source *FSSource) error {
 		if timeout <= 0 {
@@ -114,7 +126,9 @@ func WithSourceTimeout(timeout time.Duration) FSSourceOption {
 	}
 }
 
-// NewFSSource constructs a source rooted at a valid fs.ValidPath directory.
+// NewFSSource constructs a source rooted at a valid fs.ValidPath directory of
+// at most MaxMigrationSourceRootBytes. It borrows sourceFS without invoking it
+// itself; caller options run left-to-right until the first nil or failing option.
 func NewFSSource(sourceFS SourceFileSystem, root string, options ...FSSourceOption) (*FSSource, error) {
 	if sourceFS == nil || len(root) > MaxMigrationSourceRootBytes || !fs.ValidPath(root) {
 		return nil, ErrInvalidSource
@@ -133,7 +147,12 @@ func NewFSSource(sourceFS SourceFileSystem, root string, options ...FSSourceOpti
 	return source, nil
 }
 
-// Load reads, validates, and sorts the complete migration history.
+// Load reads, validates and sorts the complete migration history using a finite
+// load context and inclusive provider budgets. It returns no partial history
+// on error. Filename versions may have leading zeroes; their numeric identities
+// must be unique. SQL file directives use the owned v1 format, not SQL grammar.
+// Provider errors are reduced to context/budget/encoding classifications or
+// ErrInvalidSource; this does not sanitize arbitrary custom Source errors.
 func (source *FSSource) Load(ctx context.Context) ([]Migration, error) {
 	if source == nil || source.fs == nil || source.timeout <= 0 || !fs.ValidPath(source.root) {
 		return nil, ErrInvalidSource

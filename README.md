@@ -90,7 +90,8 @@ cleanup to 30 seconds. The PostgreSQL backend polls a held advisory lock every
 migration statement to five minutes. Primary work in each operation, including
 waiting for serialized session ownership, defaults to ten minutes. Detached
 best-effort statement-timeout restoration and lock release each use a separate
-finite cleanup budget of at most 30 seconds.
+finite cleanup budget of 30 seconds by default; `WithUnlockTimeout` can replace
+the runner release budget.
 `WithLockTimeout`, `WithStatementTimeout`, and `WithOperationTimeout` replace
 those defaults with positive finite values; zero and negative overrides are
 rejected. Invalid options and nil collaborators fail construction.
@@ -126,10 +127,11 @@ deadline, and inspect database and ledger state before retry after expiry.
 The runner starts no goroutines and has no `Close` or `Shutdown` method. The
 caller retains the source, observer, and `*sql.DB` and must close the database.
 Concurrent operations are serialized by the backend's advisory lock. An
-observer may be called concurrently when callers share a runner and never
-receives migration SQL; observer panics are contained. Observers are trusted
-synchronous callbacks and must perform bounded, nonblocking work. Honor the
-supplied context when applicable, including the caller's own finite bound for
+observer may be called concurrently when callers share a runner. Events have no
+SQL field, but custom dependency errors can contain sensitive text, and traversing
+PostgreSQL error causes exposes driver details. Observer panics are contained.
+Observers are trusted synchronous callbacks and must perform bounded,
+nonblocking work. Honor the supplied context when applicable, including the caller's own finite bound for
 cleanup events whose context is detached from cancellation. The runner cannot
 preempt a blocked callback; a callback can delay lock release and the operation's
 return. Use a bounded, nonblocking application-owned handoff for slow exporters.
@@ -166,15 +168,19 @@ lifecycle while delegating to `adapters/service`.
 
 ## Safety properties
 
-- The complete source and ledger history is validated while an advisory lock is
-  held.
+- Loaded source is validated against complete ledger history under the advisory
+  lock; source loading happens before lock acquisition. Keep artifacts immutable.
 - Applied files cannot be changed, renamed, removed, or reordered.
 - Transactional migrations update schema and ledger atomically.
 - Explicit no-transaction migrations persist dirty state before executing SQL.
 - Dirty outcomes require a checksum-bound operator recovery decision.
-- Existing Laravel databases are adopted through an exact reviewed schema
+- Existing Laravel databases are adopted through a reviewed selected-catalog
   fingerprint after relocating Laravel history out of `public.migrations`.
-- Status, plans, records, events, and migration values are immutable snapshots.
+  Grants/ownership, RLS flags/policy roles and other omitted properties need
+  separate operator review.
+- Status, plans, records and migration values protect their retained state.
+  Events have no SQL field, but custom dependency errors may retain sensitive
+  causes. A failed invocation can follow durable changes; inspect before retry.
 
 Read the [migration format](docs/migration-format.md),
 [operations guide](docs/operations.md), and

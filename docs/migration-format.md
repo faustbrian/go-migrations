@@ -27,8 +27,10 @@ DROP TABLE widgets;
 
 `Up` is required and must contain SQL. `Down` is optional; omitting it makes the
 migration irreversible, while a present `Down` section must contain
-non-whitespace SQL. Directives must occupy an entire line. Content before `Up`
-must be whitespace.
+non-whitespace SQL if bytes follow the directive. The current parser treats a
+Down directive with no following bytes as an empty, irreversible rollback;
+whitespace-only following bytes are rejected. Directives occupy an entire line.
+Content before `Up` must be whitespace.
 
 For PostgreSQL statements that cannot run in a transaction:
 
@@ -51,8 +53,9 @@ CONCURRENTLY`; use several ordered migration files instead.
 The SHA-256 checksum covers the format version, numeric version, name,
 transaction mode, up SQL, and down SQL. SQL sections use byte-length prefixes,
 so directive-like text inside SQL cannot shift the identity boundary. Every
-byte matters, including comments and whitespace. Never edit a migration after
-it has run; add a new migration.
+byte matters, including comments, whitespace and line endings. SHA-256 is an
+unkeyed identity digest, not source authentication or SQL safety validation.
+Never edit a migration after it has run; add a new migration.
 
 ## Owned ledger
 

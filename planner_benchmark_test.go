@@ -39,6 +39,8 @@ func BenchmarkBuildStatus(b *testing.B) {
 	})
 }
 
+// Compare equal accepted workloads. Historical 10,000-entry runs predate the
+// 4,096-entry source limit and are not a current performance baseline.
 func benchmarkHistorySizes(
 	b *testing.B,
 	benchmark func(*testing.B, []Migration, []Record),

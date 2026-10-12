@@ -41,7 +41,8 @@ func (entry StatusEntry) Name() string { return entry.name }
 // Checksum returns the source checksum or persisted baseline fingerprint.
 func (entry StatusEntry) Checksum() Checksum { return entry.checksum }
 
-// AppliedAt returns the persisted completion time, or zero for pending work.
+// AppliedAt returns the persisted record time, or zero for pending work.
+// For PostgreSQL dirty entries this is attempt start, not completion time.
 func (entry StatusEntry) AppliedAt() time.Time { return entry.appliedAt }
 
 // Duration returns the persisted execution duration, or zero for pending work.
@@ -59,6 +60,8 @@ func (status Status) Entries() []StatusEntry {
 
 // BuildStatus validates source and persisted identity while preserving dirty
 // entries as explicit status instead of hiding them behind a generic error.
+// Inputs obey the same ordering and retention limits as PlanUp. It performs no
+// I/O, retains no input slices and does not inspect live SQL effects or schema.
 func BuildStatus(available []Migration, records []Record) (Status, error) {
 	if err := validateAvailableOrder(available); err != nil {
 		return Status{}, err

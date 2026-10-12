@@ -11,7 +11,10 @@ CI, and restrict who can change migration and baseline files.
 Use a dedicated database role with only the DDL privileges the reviewed change
 requires. Protect connection strings through the platform secret mechanism and
 never include SQL or credentials in observers. The built-in events omit SQL
-and render database failures through stable redacted categories.
+and render built-in database failures through stable redacted categories.
+Custom Source/Backend errors are not generally sanitized, and explicit error
+traversal exposes retained PostgreSQL driver causes; keep those diagnostic
+boundaries controlled rather than logging them by default.
 Observers are trusted synchronous callbacks: keep their work bounded and
 nonblocking, or use an application-owned bounded nonblocking handoff. A blocked
 observer can delay migration completion and advisory-lock release; the runner
@@ -36,8 +39,8 @@ required during baseline review and migration windows.
 | Duplicate, deleted, renamed, reordered, or gapped history | Parser, planner, and status fail closed before execution |
 | Hostile `search_path` | Every owned-ledger query explicitly uses `public` |
 | Concurrent or restarted deployment jobs | Connection-bound advisory lock and post-lock revalidation |
-| Process or connection loss | Atomic rollback or a persisted dirty row requiring explicit recovery |
-| Baseline against partial, drifted, or advanced schema | Serializable exact schema fingerprint comparison |
+| Process or connection loss | Per-migration transactions or persisted dirty state; inspect clean/dirty/absent ledger outcomes before retry |
+| Baseline against represented schema drift | Serializable selected-catalog fingerprint comparison plus operator review of omitted grants, ownership, RLS flags/policy roles and other properties |
 | Malformed or out-of-range ledger values | Constructor range checks plus independent version, duration, and completion-state validation before rollback or recovery mutation |
 | Adapter replacement or upgrade | Neutral public API, owned ledger provenance, and compatibility corpus |
 | Observer failure or sensitive SQL disclosure | Panic isolation and structured events without SQL |

@@ -4,7 +4,10 @@
 // The adapter owns no database or migration semantics. Callers load their
 // configuration, construct the runner and resource components, and select the
 // runner operation. The adapter fixes only the command name, one-shot role,
-// task boundary, and cleanup ordering required by service.
+// task boundary, and cleanup ordering required by service. Callbacks run under
+// service contexts and retain their errors; the adapter does not contain their
+// panics or provide a new authorization/redaction boundary. See
+// TestCommandPreservesOneShotOrderingAndCallerOwnership in service_test.go.
 package migrationsservice
 
 import (
@@ -43,19 +46,26 @@ type Execution struct {
 
 // Options configure the standard migrate command adapter.
 type Options[C any] struct {
+	// Summary is nonblank command help text, preserved as supplied.
 	Summary string
-	Load    Load[C]
+	// Load resolves caller configuration before resource construction.
+	Load Load[C]
+	// Prepare supplies a runner and migration-only lifecycle components.
 	Prepare Prepare[C]
+	// Execute chooses the operation; the adapter does not retry or select it.
 	Execute Execute
 }
 
 // OptionsError identifies one rejected option.
 type OptionsError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
 
-// Error returns a secret-safe construction diagnostic.
+// Error formats Field, Reason and ErrInvalidOptions without redacting them.
 func (err *OptionsError) Error() string {
 	return fmt.Sprintf("%s: %s: %v", err.Field, err.Reason, ErrInvalidOptions)
 }
@@ -65,11 +75,14 @@ func (err *OptionsError) Unwrap() error { return ErrInvalidOptions }
 
 // ExecutionError identifies an invalid prepared execution.
 type ExecutionError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
 
-// Error returns a secret-safe execution diagnostic.
+// Error formats Field, Reason and ErrInvalidExecution without redacting them.
 func (err *ExecutionError) Error() string {
 	return fmt.Sprintf("%s: %s: %v", err.Field, err.Reason, ErrInvalidExecution)
 }
@@ -102,7 +115,10 @@ func New[C any](options Options[C]) (*Adapter[C], error) {
 	return &Adapter[C]{summary: options.Summary, load: options.Load, prepare: options.Prepare, execute: options.Execute}, nil
 }
 
-// Command returns the standard one-shot migrate registration.
+// Command returns the one-shot migrate registration. Preparation/execution
+// errors are retained; diagnostics safety belongs to those caller callbacks.
+// Components start before the task and stop under the service lifecycle, while
+// the adapter copies the component slice rather than owning the runner/database.
 func (adapter *Adapter[C]) Command() service.Command {
 	return service.CommandFor(service.CommandSpec[C]{
 		Name: "migrate", Summary: adapter.summary, Kind: service.CommandKindOneShot, Load: adapter.load,

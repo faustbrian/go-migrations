@@ -27,7 +27,9 @@ type Baseline struct {
 	fingerprint Checksum
 }
 
-// NewBaseline validates a reviewed baseline contract.
+// NewBaseline validates version, canonical name and nonzero fingerprint. It
+// does not inspect a database or establish that a human reviewed the schema;
+// Runner.Baseline asks the supporting backend to compare the fingerprint.
 func NewBaseline(version Version, name string, fingerprint Checksum) (Baseline, error) {
 	if version == 0 || version > Version(math.MaxInt64) ||
 		!validMigrationName(name) || fingerprint == (Checksum{}) {

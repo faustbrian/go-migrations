@@ -5,6 +5,12 @@ and Semantic Versioning.
 
 ## Unreleased
 
+### Documentation
+
+- Clarify loaded-source versus locked-ledger snapshots, partial durable outcomes
+  and cleanup errors, operator-asserted recovery, selected-catalog fingerprint
+  limits, and caller-owned lifecycle and diagnostic boundaries.
+
 ## 3.0.2 - 2026-10-07
 
 ### Changed

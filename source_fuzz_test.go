@@ -10,6 +10,8 @@ import (
 	migrations "github.com/faustbrian/go-migrations/v3"
 )
 
+// Every admitted file must yield one nonzero immutable migration; rejected
+// inputs need not classify identically. This is a parser oracle, not SQL proof.
 func FuzzFSSource(f *testing.F) {
 	f.Add("000001_create_users.sql", "-- +migrations Up\nSELECT 1;\n")
 	f.Add("1_index_users.sql", "-- +migrations NoTransaction\n-- +migrations Up\nSELECT $$a;b$$;\n")

@@ -7,11 +7,12 @@ ledger schema, record validation, dirty semantics, and baseline contract.
 
 The engine must execute transactional SQL and ledger changes atomically. For
 no-transaction work it must persist dirty state before SQL and clean state only
-after success. Connection or process loss at any boundary must result in either
-an atomic rollback or a detectable dirty outcome. Recovery must be explicit and
-checksum-bound. `Session.Prepare`, record reads, migration SQL, recovery, and
-release must use the same lock-owning physical connection. Backend-specific
-operations must honor their contexts, `Source.Load` must return no more than
+after success. Connection or process loss can leave an atomic rollback, a
+committed clean outcome or detectable dirty state; returned errors must not
+promise absence of durable changes. Reconcile the complete ledger before any
+retry. Recovery must be explicit and checksum-bound. `Session.Prepare`, record
+reads, migration SQL, recovery and release must use the same lock-owning physical
+connection. Backend-specific operations must honor their contexts, `Source.Load` must return no more than
 4,096 migrations, and `Session.Records` must return no more than 4,097 records.
 Conformance coverage must include a pool restricted to one connection.
 

@@ -1,6 +1,22 @@
 package migrations // import "github.com/faustbrian/go-migrations/v3"
 
-Package migrations provides engine-neutral database migration contracts.
+Package migrations loads immutable SQL histories, validates checksum-bound
+ledger state, and coordinates plans, execution, baselines and dirty recovery.
+Construct a Source and Backend, then use NewRunner for database operations;
+PlanUp, PlanDown and BuildStatus are database-independent validation helpers.
+
+Each runner operation loads source before acquiring a backend session and
+validates that loaded history against the locked ledger. Callers must keep
+deployment sources immutable; the database lock does not freeze a filesystem.
+The runner borrows its dependencies, starts no goroutines and does not close
+the caller's database. Shared sources, backends and observers must support the
+concurrency with which callers invoke them.
+
+SQL is trusted deployment code, not a sandboxed or authorized request.
+A checksum detects identity changes; it is neither a signature nor proof that
+SQL is safe or reversible. Recovery records an operator-reviewed assertion,
+not an automatic inspection or repair of database effects. See the owned v1
+format in docs/migration-format.md and lifecycle in docs/operations.md.
 
 CONSTANTS
 
@@ -129,6 +145,9 @@ const (
 	ActionRollback
 )
 type Backend interface {
+	// Acquire returns a nonnil exclusively owned session or an error. The
+	// backend must serialize cooperating jobs, honor cancellation and ensure an
+	// unsuccessful acquisition does not leave an unmanaged locked connection.
 	Acquire(context.Context) (Session, error)
 }
     Backend is the replaceable migration-engine conformance boundary.
@@ -146,7 +165,9 @@ type Baseline struct {
     database without replaying historical migrations.
 
 func NewBaseline(version Version, name string, fingerprint Checksum) (Baseline, error)
-    NewBaseline validates a reviewed baseline contract.
+    NewBaseline validates version, canonical name and nonzero fingerprint. It
+    does not inspect a database or establish that a human reviewed the schema;
+    Runner.Baseline asks the supporting backend to compare the fingerprint.
 
 func (baseline Baseline) Fingerprint() Checksum
     Fingerprint returns the expected canonical schema digest.
@@ -160,15 +181,19 @@ func (baseline Baseline) Version() Version
 type Checksum struct {
 	// Has unexported fields.
 }
-    Checksum is the SHA-256 digest of the canonical migration representation.
+    Checksum is a SHA-256 digest used for migration identity or a
+    package-defined schema fingerprint. Its zero value is invalid for persisted
+    contracts.
 
 func ChecksumData(canonical []byte) Checksum
-    ChecksumData computes the stable SHA-256 representation of canonical bytes.
-    It is intended for package-defined contracts such as schema fingerprints;
-    migration identity uses its stricter built-in canonical representation.
+    ChecksumData hashes the supplied bytes with SHA-256 without normalization,
+    validation or authentication. Callers define any canonical framing;
+    migration identity instead uses the built-in versioned, byte-length-prefixed
+    format.
 
 func ParseChecksum(value string) (Checksum, error)
-    ParseChecksum decodes the stable ledger representation of a checksum.
+    ParseChecksum accepts exactly sha256: followed by 64 lowercase hexadecimal
+    digits, rejecting the all-zero digest. Other spellings are not normalized.
 
 func (checksum Checksum) GoString() string
     GoString prevents checksum internals from becoming an accidental public
@@ -181,13 +206,17 @@ type Event struct {
 	// Has unexported fields.
 }
     Event is an immutable structured diagnostic suitable for logging and tracing
-    adapters. SQL text is deliberately excluded.
+    adapters. There is no SQL text field, but an error from a custom dependency
+    can contain sensitive data. The runner does not sanitize every error cause.
 
 func (event Event) Duration() time.Duration
     Duration returns elapsed time for completed or failed operations.
 
 func (event Event) Err() error
-    Err returns the operation failure without exposing SQL contents.
+    Err returns the operation error, except that baseline-mismatch observer
+    events use the classification alone. PostgreSQL operation errors redact
+    ordinary formatting but can expose driver causes through error traversal;
+    custom backend errors are retained. Do not log unwrapped causes.
 
 func (event Event) Operation() Operation
     Operation returns the lifecycle operation.
@@ -203,18 +232,32 @@ type FSSource struct {
 }
     FSSource loads canonical SQL migrations from one cancellation-aware source
     directory and rejects unrelated entries so packaging mistakes fail closed.
+    It borrows the provider and does not freeze directory/file reads into
+    an atomic snapshot. Use immutable deployment artifacts, not a changing
+    directory.
 
 func NewFSSource(sourceFS SourceFileSystem, root string, options ...FSSourceOption) (*FSSource, error)
-    NewFSSource constructs a source rooted at a valid fs.ValidPath directory.
+    NewFSSource constructs a source rooted at a valid fs.ValidPath directory of
+    at most MaxMigrationSourceRootBytes. It borrows sourceFS without invoking
+    it itself; caller options run left-to-right until the first nil or failing
+    option.
 
 func (source *FSSource) Load(ctx context.Context) ([]Migration, error)
-    Load reads, validates, and sorts the complete migration history.
+    Load reads, validates and sorts the complete migration history using a
+    finite load context and inclusive provider budgets. It returns no partial
+    history on error. Filename versions may have leading zeroes; their numeric
+    identities must be unique. SQL file directives use the owned v1 format,
+    not SQL grammar. Provider errors are reduced to context/budget/encoding
+    classifications or ErrInvalidSource; this does not sanitize arbitrary custom
+    Source errors.
 
 type FSSourceOption func(*FSSource) error
-    FSSourceOption configures a filesystem source.
+    FSSourceOption configures a filesystem source during construction only.
 
 func WithSourceTimeout(timeout time.Duration) FSSourceOption
-    WithSourceTimeout replaces the finite default complete-load timeout.
+    WithSourceTimeout replaces the ten-minute complete-load timeout with a
+    positive duration. This bounds cooperative provider work, not arbitrary
+    code.
 
 type Migration struct {
 	// Has unexported fields.
@@ -231,7 +274,13 @@ func NewMigration(
 	upSQL string,
 	downSQL string,
 ) (Migration, error)
-    NewMigration validates and constructs a canonical migration.
+    NewMigration validates identity, transaction mode and UTF-8, NUL-free SQL
+    totaling at most 16 MiB. Names contain lowercase ASCII letters/digits with
+    single separating underscores and at most MaxMigrationNameBytes bytes.
+    Up SQL must not be blank; empty down SQL denotes irreversibility, whereas
+    nonempty whitespace-only down SQL is rejected. SQL bytes and line endings
+    are preserved, not parsed for grammar or normalized before the v1 checksum.
+    Unlike FSSource file validation, this constructor does not reject a BOM.
 
 func (migration Migration) Checksum() Checksum
     Checksum returns the immutable content digest.
@@ -247,15 +296,19 @@ func (migration Migration) TransactionMode() TransactionMode
     TransactionMode returns the execution transaction policy.
 
 func (migration Migration) UpSQL() string
-    UpSQL returns the canonical forward SQL.
+    UpSQL returns the exact validated forward SQL, including whitespace.
 
 func (migration Migration) Version() Version
     Version returns the immutable migration version.
 
 type Observer interface {
+	// Observe receives an event inline. Panics are contained, but blocking is
+	// not preempted. Cleanup events use a context detached from cancellation;
+	// observers need their own finite bound for that work.
 	Observe(context.Context, Event)
 }
-    Observer consumes structured migration events.
+    Observer consumes synchronous migration events. Shared observers must be
+    concurrency-safe and bounded/nonblocking; they are trusted caller code.
 
 type Operation uint8
     Operation identifies an observable migration lifecycle operation.
@@ -275,16 +328,19 @@ const (
 	OperationUnlock
 )
 type Option func(*Runner) error
-    Option configures a Runner.
+    Option configures a Runner during construction only.
 
 func WithObserver(observer Observer) Option
     WithObserver installs a structured event observer. Observer panics are
-    contained so diagnostics cannot change migration outcomes.
+    contained; callbacks still run synchronously and can delay work or cleanup.
+    A nil interface is rejected; the caller must ensure any typed value is
+    usable.
 
 func WithUnlockTimeout(timeout time.Duration) Option
-    WithUnlockTimeout bounds best-effort lock release after the job context is
-    canceled. Release always uses a detached context so cancellation cannot skip
-    cleanup.
+    WithUnlockTimeout replaces the default 30-second, best-effort release
+    deadline with a positive duration. Release uses context.WithoutCancel so
+    caller cancellation does not skip its attempt. It cannot forcibly bound a
+    blocking observer, uncooperative backend or context-free driver finalizer.
 
 type Phase uint8
     Phase identifies the lifecycle phase of an emitted operation.
@@ -304,11 +360,16 @@ type Plan struct {
 
 func PlanDown(available []Migration, records []Record, count uint64) (Plan, error)
     PlanDown validates the complete persisted history and returns exactly count
-    rollback steps in descending version order. It never crosses a baseline.
+    rollback steps in descending version order. Count must be positive and fit
+    the applied history; every selected migration must have down SQL. It never
+    crosses a baseline or proves that down SQL restores the original schema.
 
 func PlanUp(available []Migration, records []Record) (Plan, error)
     PlanUp validates the complete persisted history and returns pending
-    migrations in ascending version order. Any ambiguity fails closed.
+    migrations in ascending version order. Any ambiguity fails closed. Inputs
+    must be strictly ordered, within MaxMigrationFiles/MaxMigrationRecords and
+    form an unchanged clean source prefix above any baseline. It performs no I/O
+    and does not retain the caller's slices.
 
 func (plan Plan) Steps() []Step
     Steps returns a copy so callers cannot mutate a validated plan.
@@ -327,10 +388,14 @@ func NewRecord(
 	duration time.Duration,
 	dirty bool,
 ) (Record, error)
-    NewRecord validates data crossing the owned-ledger boundary.
+    NewRecord validates kind, signed-ledger-range version, canonical name,
+    nonzero checksum/time and nonnegative duration. It preserves the supplied
+    timestamp and dirty flag; history ordering, baseline placement and source
+    agreement are separately checked by planners and status builders.
 
 func (record Record) AppliedAt() time.Time
-    AppliedAt returns when execution or baseline recording completed.
+    AppliedAt returns the persisted record time. PostgreSQL uses completion time
+    for clean records and attempt start time for dirty records.
 
 func (record Record) Checksum() Checksum
     Checksum returns the persisted migration or schema fingerprint.
@@ -366,10 +431,12 @@ type Recovery struct {
     Recovery is an immutable, checksum-bound operator decision.
 
 func NewRecovery(version Version, checksum Checksum, action RecoveryAction) (Recovery, error)
-    NewRecovery validates an explicit dirty-state resolution request.
+    NewRecovery validates a nonzero version/checksum and recognized action; it
+    does not inspect SQL effects or enforce the signed ledger version ceiling.
+    Runner.Recover must still match this identity to its validated source.
 
 func (recovery Recovery) Action() RecoveryAction
-    Action returns the operator's verified outcome.
+    Action returns the operator's asserted outcome, not a runtime verification.
 
 func (recovery Recovery) Checksum() Checksum
     Checksum returns the reviewed source checksum.
@@ -381,9 +448,9 @@ type RecoveryAction uint8
     RecoveryAction is an explicit operator assertion about a dirty migration.
 
 const (
-	// RecoveryMarkApplied certifies that the migration's full up SQL is present.
+	// RecoveryMarkApplied asserts that the operator verified all up SQL effects.
 	RecoveryMarkApplied RecoveryAction = iota + 1
-	// RecoveryMarkRolledBack certifies that all partial effects were removed.
+	// RecoveryMarkRolledBack asserts that the operator removed all partial effects.
 	RecoveryMarkRolledBack
 )
 type RecoveryResult struct {
@@ -401,10 +468,13 @@ func (result RecoveryResult) Record() Record
 type Result struct {
 	// Has unexported fields.
 }
-    Result describes the migrations completed by one runner invocation.
+    Result describes the successful acknowledged prefix of one runner Up/Down
+    invocation, including on error. It is not a whole-batch transaction receipt:
+    the failing step or cleanup may also have changed durable database state.
 
 func (result Result) Records() []Record
-    Records returns a copy of completed ledger records.
+    Records returns a copy of acknowledged records in execution order. Down
+    returns the historical clean records that were removed, not surviving rows.
 
 type Runner struct {
 	// Has unexported fields.
@@ -413,39 +483,81 @@ type Runner struct {
     revalidation, planning, and backend execution.
 
 func NewRunner(source Source, backend Backend, options ...Option) (*Runner, error)
-    NewRunner constructs an engine-neutral migration runner.
+    NewRunner borrows source/backend without loading or acquiring them itself.
+    Options are caller code. It rejects nil interfaces/options, applies options
+    left-to-right until failure and starts no goroutines. Typed-nil dependencies
+    and arbitrary callback/backend panics are not generally validated or
+    contained. Operations require a nonnil context and usable dependencies.
 
 func (runner *Runner) Baseline(ctx context.Context, baseline Baseline) (record Record, err error)
     Baseline validates and records an existing schema without replaying any
     historical framework migrations. The owned ledger must be empty, and every
     Go-owned source migration must have a version strictly above the baseline.
+    The session must implement Baseline(context.Context, Baseline) (Record,
+    error), otherwise ErrBaselineUnsupported is returned. PostgreSQL compares
+    its selected catalog fingerprint transactionally; matching it does not
+    verify every schema or security property. Cleanup errors can follow a
+    committed baseline.
 
 func (runner *Runner) Down(ctx context.Context, count uint64) (result Result, err error)
-    Down rolls back exactly count applied migrations, newest first. The source
-    and complete ledger history are revalidated while holding the lock.
+    Down plans exactly count clean applied migrations, newest first, validating
+    loaded source against locked ledger history. Count must be positive;
+    planning fails before SQL if any selected migration is irreversible or
+    crosses a baseline. Execution can stop partway: Result contains acknowledged
+    removals, and an error does not establish that the failing step made no
+    durable change.
 
 func (runner *Runner) Plan(ctx context.Context) (plan Plan, err error)
-    Plan returns a locked dry-run plan without executing migration SQL.
+    Plan loads source before locking and validates that history against the
+    locked ledger without executing migration SQL. It can initialize the ledger;
+    it is not an I/O-free operation or a reservation for a later Up call.
 
 func (runner *Runner) Recover(
 	ctx context.Context,
 	recovery Recovery,
 ) (result RecoveryResult, err error)
-    Recover resolves one checksum-matched dirty migration after the operator has
-    verified that its effects are either fully applied or fully removed.
+    Recover resolves one checksum-matched dirty migration after the operator
+    has verified that its effects are either fully applied or fully removed.
+    The session must support the Recover method taking context.Context,
+    Migration and RecoveryAction and returning (Record, error), otherwise
+    ErrRecoveryUnsupported is returned. The runner checks source and
+    dirty-record identity but does not execute SQL or verify the asserted
+    effects. A release error can follow a persisted recovery decision.
 
 func (runner *Runner) Status(ctx context.Context) (status Status, err error)
-    Status returns a locked, internally consistent source and ledger snapshot.
+    Status loads source before locking, prepares/reads the ledger under the
+    session lock and returns their validated status. It does not inspect live
+    SQL effects or freeze source changes; ledger preparation may execute SQL.
 
 func (runner *Runner) Up(ctx context.Context) (result Result, err error)
-    Up applies all pending migrations. Source and ledger history are revalidated
-    while holding the lock, eliminating plan-to-execution races.
+    Up loads source, acquires a session and validates that loaded history
+    against the locked ledger before applying pending steps in ascending order.
+    The lock coordinates backend jobs, not source mutations or unrelated
+    database writers. Each step has its own backend transaction policy, not a
+    batch transaction. On failure Result contains only earlier acknowledged
+    steps; inspect database and ledger state before retry because the failing
+    step or cleanup may have followed durable changes. The runner does not retry
+    automatically.
 
 type Session interface {
+	// Prepare initializes the owned ledger on the lock-owning connection. It
+	// may execute SQL even for a plan/status operation.
 	Prepare(context.Context) error
+	// Records returns the complete, version-ordered ledger within
+	// MaxMigrationRecords, with returned data stable for the caller to validate.
 	Records(context.Context) ([]Record, error)
+	// Apply executes up SQL and persists its matching clean record on success.
+	// Transactional SQL and ledger writes must be atomic; nontransactional work
+	// must persist dirty state before executing SQL. Errors can follow durable
+	// changes and must not be interpreted as proof that nothing ran.
 	Apply(context.Context, Migration) (Record, error)
+	// Rollback executes down SQL and removes the matching record on success,
+	// returning the removed clean record. It has the same transactional and
+	// explicit dirty-outcome obligations as Apply.
 	Rollback(context.Context, Migration) (Record, error)
+	// Release relinquishes the session's connection and exclusive ownership.
+	// Runner attempts it once after acquisition using a detached finite context;
+	// cleanup errors are joined with any operation error.
 	Release(context.Context) error
 }
     Session represents exclusive migration-job ownership bound to one physical
@@ -455,10 +567,15 @@ type Session interface {
     Records must return at most MaxMigrationRecords entries.
 
 type Source interface {
+	// Load returns a complete history or an error, not a usable partial history.
+	// It runs before the runner acquires the database lock.
 	Load(context.Context) ([]Migration, error)
 }
     Source loads a complete immutable migration history. Implementations must
-    honor the supplied context and return at most MaxMigrationFiles entries.
+    honor the supplied context, return at most MaxMigrationFiles entries in
+    strictly increasing version order, and keep returned data stable during use.
+    Runner retains source errors without removing their causes; custom sources
+    must keep their own diagnostics safe.
 
 type SourceDirectoryLimits struct {
 	// MaxEntries is the largest complete entry inventory.
@@ -481,7 +598,11 @@ type SourceEntry struct {
     migration.
 
 type SourceFileSystem interface {
+	// ReadDir returns the complete directory inventory, including unrelated
+	// entries for FSSource to reject. It must bound metadata before retention.
 	ReadDir(ctx context.Context, root string, limits SourceDirectoryLimits) ([]SourceEntry, error)
+	// ReadFile returns at most maxBytes of stable file content, enforcing the
+	// bound before retaining it and closing any provider-owned file handles.
 	ReadFile(ctx context.Context, name string, maxBytes int) ([]byte, error)
 }
     SourceFileSystem provides cancellation-aware, bounded migration file access.
@@ -513,6 +634,9 @@ type Status struct {
 func BuildStatus(available []Migration, records []Record) (Status, error)
     BuildStatus validates source and persisted identity while preserving dirty
     entries as explicit status instead of hiding them behind a generic error.
+    Inputs obey the same ordering and retention limits as PlanUp. It performs
+    no I/O, retains no input slices and does not inspect live SQL effects or
+    schema.
 
 func (status Status) Entries() []StatusEntry
     Entries returns a copy so callers cannot mutate the validated snapshot.
@@ -523,7 +647,8 @@ type StatusEntry struct {
     StatusEntry is one immutable source or ledger status item.
 
 func (entry StatusEntry) AppliedAt() time.Time
-    AppliedAt returns the persisted completion time, or zero for pending work.
+    AppliedAt returns the persisted record time, or zero for pending work.
+    For PostgreSQL dirty entries this is attempt start, not completion time.
 
 func (entry StatusEntry) Checksum() Checksum
     Checksum returns the source checksum or persisted baseline fingerprint.
@@ -556,27 +681,33 @@ type TransactionMode uint8
     transaction.
 
 const (
-	// TransactionModeDefault executes the migration atomically.
+	// TransactionModeDefault requests one transaction for SQL and ledger writes.
 	TransactionModeDefault TransactionMode = iota
 	// TransactionModeNone permits operations PostgreSQL cannot run in a
-	// transaction. A failed migration in this mode requires explicit recovery.
+	// transaction. An unresolved dirty outcome requires explicit recovery.
 	TransactionModeNone
 )
 type Version uint64
-    Version is the immutable, monotonically increasing migration identifier.
+    Version is a numeric migration identity. NewMigration, NewBaseline and
+    NewRecord accept only 1 through the maximum signed 64-bit integer;
+    source and ledger histories must be strictly increasing, not necessarily
+    contiguous.
 
 func (version Version) String() string
-    String returns the canonical unpadded decimal representation.
+    String returns unpadded decimal text without validating the version.
 
 package migrationsservice // import "github.com/faustbrian/go-migrations/v3/adapters/service"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
 service migrate command.
 
-The adapter owns no database or migration semantics. Callers load their
-configuration, construct the runner and resource components, and select the
-runner operation. The adapter fixes only the command name, one-shot role,
-task boundary, and cleanup ordering required by service.
+The adapter owns no database or migration semantics. Callers load
+their configuration, construct the runner and resource components,
+and select the runner operation. The adapter fixes only the command name,
+one-shot role, task boundary, and cleanup ordering required by service.
+Callbacks run under service contexts and retain their errors; the adapter does
+not contain their panics or provide a new authorization/redaction boundary.
+See TestCommandPreservesOneShotOrderingAndCallerOwnership in service_test.go.
 
 VARIABLES
 
@@ -598,7 +729,11 @@ func New[C any](options Options[C]) (*Adapter[C], error)
     New validates and constructs the standard migrate command adapter.
 
 func (adapter *Adapter[C]) Command() service.Command
-    Command returns the standard one-shot migrate registration.
+    Command returns the one-shot migrate registration. Preparation/execution
+    errors are retained; diagnostics safety belongs to those caller callbacks.
+    Components start before the task and stop under the service lifecycle,
+    while the adapter copies the component slice rather than owning the
+    runner/database.
 
 type Execute func(context.Context, *migrations.Runner) error
     Execute selects one caller-owned migrations.Runner operation.
@@ -612,13 +747,16 @@ type Execution struct {
     Execution contains the prepared runner and its explicit resource lifecycle.
 
 type ExecutionError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
     ExecutionError identifies an invalid prepared execution.
 
 func (err *ExecutionError) Error() string
-    Error returns a secret-safe execution diagnostic.
+    Error formats Field, Reason and ErrInvalidExecution without redacting them.
 
 func (err *ExecutionError) Unwrap() error
     Unwrap exposes the stable execution classification.
@@ -628,21 +766,28 @@ type Load[C any] func(context.Context, service.Invocation) (C, error)
     construction.
 
 type Options[C any] struct {
+	// Summary is nonblank command help text, preserved as supplied.
 	Summary string
-	Load    Load[C]
+	// Load resolves caller configuration before resource construction.
+	Load Load[C]
+	// Prepare supplies a runner and migration-only lifecycle components.
 	Prepare Prepare[C]
+	// Execute chooses the operation; the adapter does not retry or select it.
 	Execute Execute
 }
     Options configure the standard migrate command adapter.
 
 type OptionsError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
     OptionsError identifies one rejected option.
 
 func (err *OptionsError) Error() string
-    Error returns a secret-safe construction diagnostic.
+    Error formats Field, Reason and ErrInvalidOptions without redacting them.
 
 func (err *OptionsError) Unwrap() error
     Unwrap exposes the stable option classification.
@@ -652,8 +797,12 @@ type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, e
 
 package conformance // import "github.com/faustbrian/go-migrations/v3/conformance"
 
-Package conformance provides the reusable behavioral test suite every migration
-backend must pass without depending on its execution engine.
+Package conformance provides the reusable behavioral test suite every
+migration backend must pass without depending on its execution engine. Run uses
+caller-provided isolated databases and SQL; it creates no database itself. The
+suite tests public runner outcomes, not complete crash, driver, cancellation,
+security or supported-database qualification. Backend owners retain those
+integration/fault obligations (docs/engine-replacement.md).
 
 FUNCTIONS
 
@@ -664,14 +813,23 @@ func Run(t *testing.T, harness Harness)
 TYPES
 
 type Harness struct {
-	NewRunner            func(*testing.T, fstest.MapFS) *migrations.Runner
-	Exec                 func(*testing.T, string)
-	TransactionalUp      string
-	TransactionalDown    string
-	NoTransactionUp      string
-	NoTransactionDown    string
+	// NewRunner constructs a usable runner for this subtest and registers resource cleanup.
+	NewRunner func(*testing.T, fstest.MapFS) *migrations.Runner
+	// Exec executes reviewed cleanup SQL in the subtest database and fails t on error.
+	Exec func(*testing.T, string)
+	// TransactionalUp is valid transactional up SQL for an observable schema effect.
+	TransactionalUp string
+	// TransactionalDown reverses TransactionalUp for rollback assertions.
+	TransactionalDown string
+	// NoTransactionUp is valid no-transaction up SQL compatible with TransactionalUp.
+	NoTransactionUp string
+	// NoTransactionDown reverses NoTransactionUp.
+	NoTransactionDown string
+	// TransactionalFailure is SQL that fails transactionally without surviving effects.
 	TransactionalFailure string
+	// NoTransactionFailure fails after leaving observable partial effects.
 	NoTransactionFailure string
+	// RemovePartialEffects fully removes NoTransactionFailure effects before recovery.
 	RemovePartialEffects string
 }
     Harness supplies engine-specific SQL and isolated runner construction.
@@ -682,7 +840,10 @@ type Harness struct {
 
 package migrationsservice // import "github.com/faustbrian/go-migrations/v3/migrationsservice"
 
-Package migrationsservice preserves the released service-adapter path.
+Package migrationsservice preserves the released service-adapter path and
+named type identities by delegating to adapters/service. It shares sentinels
+and one-shot lifecycle behavior, translating option errors to legacy types.
+It adds no database ownership, execution policy or retries.
 
 Deprecated: use github.com/faustbrian/go-migrations/v3/adapters/service.
 
@@ -706,25 +867,35 @@ func New[C any](options Options[C]) (*Adapter[C], error)
     New delegates to the canonical service adapter.
 
 func (adapter *Adapter[C]) Command() service.Command
-    Command returns the standard one-shot migrate registration.
+    Command returns the one-shot migrate registration. Preparation/execution
+    errors are retained; diagnostics safety belongs to those caller callbacks.
+    Components start before the task and stop under the service lifecycle,
+    while the adapter copies the component slice rather than owning the
+    runner/database.
 
 type Execute func(context.Context, *migrations.Runner) error
     Execute selects one caller-owned migrations.Runner operation.
 
 type Execution struct {
-	Runner     *migrations.Runner
+	// Runner is required and remains caller-owned; Execute chooses its use.
+	Runner *migrations.Runner
+	// Components supply the migration-only service lifecycle. Their slice is
+	// copied for the plan; resource lifetime follows service start/stop semantics.
 	Components []service.Component
 }
     Execution contains the prepared runner and its explicit resource lifecycle.
 
 type ExecutionError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
     ExecutionError identifies an invalid prepared execution.
 
 func (err *ExecutionError) Error() string
-    Error returns a secret-safe execution diagnostic.
+    Error formats Field, Reason and ErrInvalidExecution without redacting them.
 
 func (err *ExecutionError) Unwrap() error
     Unwrap exposes the stable execution classification.
@@ -734,21 +905,28 @@ type Load[C any] func(context.Context, service.Invocation) (C, error)
     construction.
 
 type Options[C any] struct {
+	// Summary is nonblank command help text, preserved as supplied.
 	Summary string
-	Load    Load[C]
+	// Load resolves caller configuration before resource construction.
+	Load Load[C]
+	// Prepare supplies a runner and migration-only lifecycle components.
 	Prepare Prepare[C]
+	// Execute chooses the operation; the adapter does not retry or select it.
 	Execute Execute
 }
     Options configure the standard migrate command adapter.
 
 type OptionsError struct {
-	Field  string
+	// Field identifies the rejected option or prepared value.
+	Field string
+	// Reason explains rejection. Both fields appear verbatim in Error text;
+	// callers constructing errors themselves must exclude sensitive content.
 	Reason string
 }
     OptionsError identifies one rejected option.
 
 func (err *OptionsError) Error() string
-    Error returns a secret-safe construction diagnostic.
+    Error formats Field, Reason and ErrInvalidOptions without redacting them.
 
 func (err *OptionsError) Unwrap() error
     Unwrap exposes the stable option classification.
@@ -758,7 +936,22 @@ type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, e
 
 package postgres // import "github.com/faustbrian/go-migrations/v3/postgres"
 
-Package postgres implements the owned PostgreSQL ledger and lock backend.
+Package postgres implements the public.migrations ledger and connection-bound
+advisory-lock backend for migrations.Runner. New borrows a caller-owned *sql.DB;
+it does not open, close or migrate the database at construction. Acquire owns
+one leased connection until Release. Cooperating jobs in the same database share
+a stable lock; unrelated schema writers are not excluded.
+
+Transactional SQL and ledger changes use one transaction per migration.
+Nontransactional execution persists dirty state first; unresolved dirty outcomes
+require explicit operator review/recovery. An error during commit or timeout
+cleanup can follow durable changes; inspect state before retrying. Finite
+contexts bound cooperative work, not context-free database/sql finalizers.
+
+Default PostgreSQL operation formatting hides driver diagnostics, but error
+traversal may expose the original cause. Schema inspection returns sensitive
+definitions and covers only selected catalog properties, not a security audit.
+See docs/operations.md and docs/threat-model.md (risks 003, 006 and 007).
 
 CONSTANTS
 
@@ -767,7 +960,8 @@ const (
 	// MaxLedgerRecords permits one baseline plus the complete bounded migration
 	// source while preventing a hostile ledger from growing retained state.
 	MaxLedgerRecords = migrations.MaxMigrationFiles + 1
-	// MaxLedgerBytes bounds aggregate text retained from one ledger read.
+	// MaxLedgerBytes bounds aggregate kind/name/checksum text retained from one
+	// ledger read, not allocations made by the driver before each scan.
 	MaxLedgerBytes = 16 << 20
 )
 const (
@@ -808,7 +1002,13 @@ var ErrInvalidSchemaSnapshot = errors.New("invalid PostgreSQL schema snapshot")
 FUNCTIONS
 
 func Fingerprint(objects []SchemaObject) (migrations.Checksum, error)
-    Fingerprint hashes a complete, unambiguous PostgreSQL schema snapshot.
+    Fingerprint hashes supplied catalog objects using the v1 schema framing:
+    sorted unique identities and byte-length-prefixed, unnormalized definitions.
+    It bounds object count/field/aggregate bytes and rejects empty or
+    duplicate identities and empty definitions. It copies the slice before
+    sorting and accepts an empty inventory. It does not query a database,
+    verify completeness, validate SQL/encoding, authenticate the input or check
+    security properties.
 
 
 TYPES
@@ -819,26 +1019,44 @@ type Backend struct {
     Backend owns PostgreSQL preparation and creates connection-bound sessions.
 
 func New(database *sql.DB, options ...Option) (*Backend, error)
-    New constructs the PostgreSQL backend without taking ownership of database.
+    New constructs the backend without invoking database itself or taking its
+    ownership. Caller options run left-to-right until a nil/failing option;
+    repeated settings use the last value. Defaults are 30-second acquisition,
+    five-minute statement and ten-minute primary-operation timeouts. The caller
+    closes the database after all sessions finish and must not mutate options
+    during use.
 
 func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
     Acquire waits for the stable package advisory lock on one physical
-    connection and returns all subsequent operations bound to that connection.
+    connection and returns all subsequent session operations bound to it. Its
+    lock timeout includes pool acquisition and polling. Database failures are
+    not retried; uncertain lock-query failures discard the physical connection.
+    A successful caller must Release the session even after operation failure.
 
 func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error)
-    Inspect returns the current schema fingerprint for review and baseline
-    contract generation. It does not mutate either migration ledger.
+    Inspect returns a fingerprint of the package-selected catalog query using
+    a separate leased connection, without taking the migration advisory lock or
+    changing the ledger. It does not freeze concurrent DDL for a later Baseline.
 
 func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, error)
-    InspectObjects returns the canonical catalog objects used for review and
-    fingerprint diagnostics. The package-owned ledger is excluded.
+    InspectObjects returns selected catalog identities/definitions for review,
+    excluding the package-owned ledger. The caller owns the returned slice; text
+    can contain sensitive SQL/literals and should not enter routine diagnostics.
+    It does not take the advisory lock. The query includes relations, columns,
+    constraints, indexes, triggers, selected policy expressions, enum/domain
+    types, functions and extension versions, but not role grants/ownership,
+    policy role targets, RLS enabled/forced flags, row contents or all
+    PostgreSQL properties. A matching fingerprint therefore does not certify
+    the whole schema/security state; review those omitted properties separately
+    before adoption.
 
 type Option func(*Backend) error
-    Option configures a PostgreSQL backend.
+    Option configures a PostgreSQL backend during construction only.
 
 func WithLockRetryInterval(interval time.Duration) Option
     WithLockRetryInterval controls polling when another job owns the advisory
-    lock. Cancellation is always honored while waiting.
+    lock. Interval must be positive; the default is 100 milliseconds. Context
+    cancellation interrupts the timer between unsuccessful contention attempts.
 
 func WithLockTimeout(timeout time.Duration) Option
     WithLockTimeout replaces the finite default advisory-lock polling timeout.
@@ -859,7 +1077,11 @@ func WithStatementTimeout(timeout time.Duration) Option
     value.
 
 type SchemaObject struct {
-	Identity   string
+	// Identity is a unique, nonempty catalog key of at most
+	// MaxSchemaObjectIdentityBytes; fingerprinting does not normalize its bytes.
+	Identity string
+	// Definition is nonempty catalog text of at most
+	// MaxSchemaObjectDefinitionBytes. It can contain sensitive SQL or literals.
 	Definition string
 }
     SchemaObject is one canonical PostgreSQL catalog identity and definition.
