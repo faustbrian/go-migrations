@@ -1,5 +1,7 @@
 # Benchmark baselines
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 Native Go benchmarks cover the bounded, database-independent work performed by
 the migration runtime:
 
@@ -59,3 +61,6 @@ repeated measurements on a stable host with the current toolchain.
 | `FSSourceLoad/migrations_1000` | 3,556,108 | 18,113,669 | 21,934 |
 | `Fingerprint/objects_100` | 21,146 | 110,265 | 120 |
 | `Fingerprint/objects_10000` | 2,452,560 | 13,097,008 | 10,038 |
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

@@ -1,5 +1,7 @@
 # Security
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The repository-specific, versioned [threat model](threat-model.md) inventories
 assets, trust boundaries, controls, accepted risks, and v3 release
 requirements. This page provides the corresponding operator guidance.
@@ -66,3 +68,6 @@ Operational controls and compatibility constraints are documented in the
 
 Report vulnerabilities privately to the maintainers. Do not open a public issue
 with credentials, exploit details, or production schema data.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

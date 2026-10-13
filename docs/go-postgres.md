@@ -1,5 +1,7 @@
 # postgres integration
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 `migrations` and `postgres` must remain sibling dependencies. The service
 composition root obtains the underlying `*sql.DB` from its `postgres`
 connection component and passes that standard-library handle to this package.
@@ -39,3 +41,6 @@ Do not pass an application transaction to the runner. The PostgreSQL backend
 owns transaction boundaries so schema SQL and ledger state remain atomic. Keep
 `sqlc` generation in the consuming service's build and CI; generated queries,
 models, and schema inputs are not migration runtime state.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

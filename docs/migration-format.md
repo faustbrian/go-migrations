@@ -1,5 +1,7 @@
 # Migration format and ledger
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 ## Canonical SQL files
 
 Files supplied by `SourceFileSystem` use
@@ -88,3 +90,6 @@ more than 4,096 migrations or 4,097 ledger records before proportional
 allocation, including results from custom implementations.
 Migration rows persist `postgres` / `v1`, not the replaceable adapter name or
 version. Adapter upgrades therefore do not rewrite or redefine ledger history.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

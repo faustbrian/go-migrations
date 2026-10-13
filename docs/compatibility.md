@@ -1,5 +1,7 @@
 # Compatibility
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The published v1 and v2 lines remain available. This source contains the v3
 line at `github.com/faustbrian/go-migrations/v3`. The compatible v3.0.1 patch
 is the latest published v3 release.
@@ -50,3 +52,6 @@ The aligned v1 fixture proves row compatibility, not automatic table adoption.
 V3 consumers must replace `/v2` with `/v3` in Go imports. The Go API is
 otherwise unchanged from v2; the ledger rename and Laravel relocation
 requirement are the breaking persisted-contract changes.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

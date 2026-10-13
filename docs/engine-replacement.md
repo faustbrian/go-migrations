@@ -1,5 +1,7 @@
 # Replacing the execution engine
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 An alternative engine implements `Backend` and connection-bound `Session`
 without changing root-package migrations or persisted records. Preserve the
 canonical parser, checksum algorithm, planner, status model, lock ownership,
@@ -27,3 +29,6 @@ rows to make a new engine appear compatible.
 The shared suite must remain engine-neutral while covering deterministic plans,
 status transitions, idempotency, rollback, dirty recovery, concurrent runners,
 and checksum, rename, and deletion errors through public runner operations.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

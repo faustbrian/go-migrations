@@ -1,5 +1,7 @@
 # Threat model
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 **Model version:** 1.3
 
 **Applies to:** `github.com/faustbrian/go-migrations/v3` source
@@ -145,3 +147,6 @@ Resolve table ownership conflicts without merging histories. Laravel history
 must be relocated and its baseline fingerprint reviewed before Go adoption.
 This is an explicit application rollout boundary, not permission for automatic
 history mutation.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

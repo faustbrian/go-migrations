@@ -1,5 +1,7 @@
 # FAQ
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 ## Why not use Laravel's or Goose's table?
 
 Those schemas are framework implementation details. Owning the ledger keeps the
@@ -29,3 +31,6 @@ are visible before service processes start.
 
 Inspect the database and exact source, fully complete or remove its effects,
 then use the explicit recovery API. Never update the ledger manually.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

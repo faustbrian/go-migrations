@@ -1,5 +1,7 @@
 # Operations and recovery
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 ## Deployment sequence
 
 1. Build one immutable application image containing migrations.
@@ -110,3 +112,6 @@ Do not run older binaries after upgrading: they target a different table.
 Resolve any existing `public.migrations` ownership conflict before the manual
 rename; never merge histories. Existing Laravel history must be relocated first
 as specified in the [baseline runbook](laravel-baseline.md).
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

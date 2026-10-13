@@ -1,5 +1,7 @@
 # Architecture and engine contract
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 Applications import the root package and an engine backend. The root package
 loads immutable migrations, validates history, builds deterministic plans, and
 coordinates execution. `postgres.Backend` owns PostgreSQL advisory locking,
@@ -50,3 +52,6 @@ The released `migrationsservice` package is a compatibility facade over this
 canonical implementation. Both paths preserve their own named type identities;
 the facade translates structured construction errors while sharing stable
 sentinels and the same one-shot command behavior.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

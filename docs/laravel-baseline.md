@@ -1,5 +1,7 @@
 # Laravel-to-Go baseline runbook
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 This procedure adopts an existing schema without replaying Laravel migrations.
 The Go ledger owns `public.migrations`. Before adoption, stop Laravel schema
 changes and relocate its history, for example with
@@ -50,3 +52,6 @@ not insert a row manually. If an incorrect baseline was committed, stop all Go
 migration jobs and restore the database to a pre-baseline consistent backup or
 perform a separately reviewed ledger correction under incident procedure.
 Preserve the relocated Laravel table throughout.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.
