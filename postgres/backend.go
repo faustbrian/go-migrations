@@ -192,6 +192,7 @@ func WithOperationTimeout(timeout time.Duration) Option {
 // Backend owns PostgreSQL preparation and creates connection-bound sessions.
 type Backend struct {
 	database          *sql.DB
+	namespace         string
 	lockRetryInterval time.Duration
 	lockTimeout       time.Duration
 	statementTimeout  time.Duration
@@ -227,7 +228,7 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 	return backend, nil
 }
 
-// Prepare creates public.migrations if absent on the advisory-lock connection.
+// Prepare creates the selected ledger if absent on the advisory-lock connection.
 // Existing Laravel history must be relocated first.
 func (session *session) Prepare(ctx context.Context) error {
 	operationCtx, finish, err := session.beginOperation(ctx)
@@ -238,7 +239,7 @@ func (session *session) Prepare(ctx context.Context) error {
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
 	}
-	if _, err := session.connection.ExecContext(operationCtx, createLedgerSQL); err != nil {
+	if _, err := session.connection.ExecContext(operationCtx, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
 		return databaseContextFailure(operationCtx, "create migration ledger", err)
 	}
 
@@ -280,6 +281,7 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 		if acquired {
 			return &session{
 				connection:       connection,
+				namespace:        backend.namespace,
 				statementTimeout: backend.statementTimeout,
 				operationTimeout: backend.operationTimeout,
 				gate:             newOperationGate(),
@@ -300,6 +302,7 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 
 type session struct {
 	connection       *sql.Conn
+	namespace        string
 	statementTimeout time.Duration
 	operationTimeout time.Duration
 	gate             operationGate
@@ -361,12 +364,15 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 		return nil, ErrSessionReleased
 	}
 
-	rows, err := session.connection.QueryContext(operationCtx, "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.migrations ORDER BY version ASC")
+	rows, err := session.connection.QueryContext(operationCtx, ledgerSQL(ledgerRecordsSQL, session.namespace))
 	if err != nil {
 		return nil, databaseContextFailure(operationCtx, "query migration ledger", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return decodeLedgerRows(operationCtx, rows)
+}
 
+func decodeLedgerRows(operationCtx context.Context, rows *sql.Rows) ([]migrations.Record, error) {
 	records := make([]migrations.Record, 0, min(MaxLedgerRecords, 128))
 	totalBytes := 0
 	for rows.Next() {
@@ -399,10 +405,11 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 				errors.Join(migrations.ErrInvalidRecord, err),
 			)
 		}
-		totalBytes, err = boundedTextBytes(totalBytes, MaxLedgerBytes, kindText, name, encoded)
+		nextBytes, err := boundedTextBytes(totalBytes, MaxLedgerBytes, kindText, name, encoded)
 		if err != nil {
 			return nil, err
 		}
+		totalBytes = nextBytes
 		if dirty == finishedAt.Valid {
 			return nil, migrations.ErrInvalidRecord
 		}
@@ -516,7 +523,7 @@ func (session *session) Recover(
 		var durationMS int64
 		err := session.connection.QueryRowContext(
 			operationCtx,
-			`UPDATE public.migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`,
+			ledgerSQL(`UPDATE public.migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`, session.namespace),
 			finishedAt,
 			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
@@ -547,7 +554,7 @@ func (session *session) Recover(
 		var durationMS int64
 		err := session.connection.QueryRowContext(
 			operationCtx,
-			`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+			ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`, session.namespace),
 			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
 			maximumDurationMilliseconds,
@@ -595,7 +602,7 @@ func (session *session) rollbackTransaction(
 	if err := adapter.RollbackTx(ctx, transaction); err != nil {
 		return migrations.Record{}, err
 	}
-	record, err := deleteRecord(ctx, transaction, migration)
+	record, err := deleteRecord(ctx, transaction, migration, session.namespace)
 	if err != nil {
 		return migrations.Record{}, err
 	}
@@ -639,7 +646,7 @@ func (session *session) rollbackWithoutTransaction(
 	var durationMS int64
 	err = session.connection.QueryRowContext(
 		ctx,
-		`UPDATE public.migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`,
+		ledgerSQL(`UPDATE public.migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`, session.namespace),
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 		maximumDurationMilliseconds,
@@ -659,7 +666,7 @@ func (session *session) rollbackWithoutTransaction(
 	}
 	result, err := session.connection.ExecContext(
 		ctx,
-		`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true`,
+		ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true`, session.namespace),
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	)
@@ -700,7 +707,7 @@ func (session *session) applyTransaction(
 		return migrations.Record{}, err
 	}
 
-	if err := insertDirty(ctx, transaction, migration, startedAt); err != nil {
+	if err := insertDirty(ctx, transaction, migration, startedAt, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
 	if err := adapter.ApplyTx(ctx, transaction); err != nil {
@@ -709,7 +716,7 @@ func (session *session) applyTransaction(
 
 	finishedAt := time.Now().UTC()
 	duration := finishedAt.Sub(startedAt)
-	if err := markClean(ctx, transaction, migration, finishedAt, duration); err != nil {
+	if err := markClean(ctx, transaction, migration, finishedAt, duration, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -740,7 +747,7 @@ func (session *session) applyWithoutTransaction(
 		err = errors.Join(err, session.resetSessionStatementTimeout(ctx))
 	}()
 
-	if err := insertDirty(ctx, session.connection, migration, startedAt); err != nil {
+	if err := insertDirty(ctx, session.connection, migration, startedAt, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
 	if err := adapter.ApplyConn(ctx, session.connection); err != nil {
@@ -749,7 +756,7 @@ func (session *session) applyWithoutTransaction(
 
 	finishedAt := time.Now().UTC()
 	duration := finishedAt.Sub(startedAt)
-	if err := markClean(ctx, session.connection, migration, finishedAt, duration); err != nil {
+	if err := markClean(ctx, session.connection, migration, finishedAt, duration, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
 
@@ -814,10 +821,11 @@ func insertDirty(
 	execer contextExecer,
 	migration migrations.Migration,
 	startedAt time.Time,
+	namespace string,
 ) error {
 	_, err := execer.ExecContext(
 		ctx,
-		`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`,
+		ledgerSQL(`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`, namespace),
 		migrationLedgerVersion(migration),
 		"migration",
 		migration.Name(),
@@ -837,10 +845,11 @@ func markClean(
 	migration migrations.Migration,
 	finishedAt time.Time,
 	duration time.Duration,
+	namespace string,
 ) error {
 	result, err := execer.ExecContext(
 		ctx,
-		`UPDATE public.migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`,
+		ledgerSQL(`UPDATE public.migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`, namespace),
 		finishedAt,
 		duration.Milliseconds(),
 		migrationLedgerVersion(migration),
@@ -866,12 +875,13 @@ func deleteRecord(
 		QueryRowContext(context.Context, string, ...any) *sql.Row
 	},
 	migration migrations.Migration,
+	namespace string,
 ) (migrations.Record, error) {
 	var appliedAt time.Time
 	var durationMS int64
 	err := queryer.QueryRowContext(
 		ctx,
-		`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`,
+		ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`, namespace),
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	).Scan(&appliedAt, &durationMS)

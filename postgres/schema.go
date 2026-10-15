@@ -215,7 +215,7 @@ func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error
 	}
 	defer func() { _ = connection.Close() }()
 
-	return inspectSchema(operationCtx, connection)
+	return inspectSchema(operationCtx, connection, backend.namespace)
 }
 
 // InspectObjects returns selected catalog identities/definitions for review,
@@ -240,7 +240,7 @@ func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, err
 	}
 	defer func() { _ = connection.Close() }()
 
-	return inspectObjects(operationCtx, connection)
+	return inspectObjects(operationCtx, connection, backend.namespace)
 }
 
 // Baseline compares the selected catalog fingerprint and inserts its row in
@@ -262,7 +262,7 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	}
 	defer func() { _ = transaction.Rollback() }()
 
-	fingerprint, err := inspectSchema(operationCtx, transaction)
+	fingerprint, err := inspectSchema(operationCtx, transaction, session.namespace)
 	if err != nil {
 		return migrations.Record{}, err
 	}
@@ -278,7 +278,7 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	appliedAt := time.Now().UTC()
 	_, err = transaction.ExecContext(
 		operationCtx,
-		`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`,
+		ledgerSQL(`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`, session.namespace),
 		baselineLedgerVersion(baseline),
 		"baseline",
 		baseline.Name(),
@@ -313,8 +313,8 @@ func baselineLedgerVersion(baseline migrations.Baseline) int64 {
 	return int64(baseline.Version())
 }
 
-func inspectSchema(ctx context.Context, queryer schemaQueryer) (migrations.Checksum, error) {
-	objects, err := inspectObjects(ctx, queryer)
+func inspectSchema(ctx context.Context, queryer schemaQueryer, namespace string) (migrations.Checksum, error) {
+	objects, err := inspectObjects(ctx, queryer, namespace)
 	if err != nil {
 		return migrations.Checksum{}, err
 	}
@@ -322,8 +322,8 @@ func inspectSchema(ctx context.Context, queryer schemaQueryer) (migrations.Check
 	return Fingerprint(objects)
 }
 
-func inspectObjects(ctx context.Context, queryer schemaQueryer) ([]SchemaObject, error) {
-	rows, err := queryer.QueryContext(ctx, schemaObjectsSQL)
+func inspectObjects(ctx context.Context, queryer schemaQueryer, namespace string) ([]SchemaObject, error) {
+	rows, err := queryer.QueryContext(ctx, schemaSQL(namespace))
 	if err != nil {
 		return nil, databaseContextFailure(ctx, "inspect PostgreSQL schema", err)
 	}

@@ -174,6 +174,21 @@ lifecycle while delegating to `adapters/service`.
 
 ## Safety properties
 
+- Independent migration owners can derive `backend.ForNamespace("outbox")`.
+  The selected ledger is exactly `public.golib_migrations_outbox`; default
+  runners still use `public.migrations`. All owners share the native lock.
+- `ReadLedger` performs bounded read-only discovery without creating a ledger.
+  Its snapshot is not execution ownership; revalidate under the native lock.
+- `InstallFresh` installs a complete transactional history and optional
+  package-owned preflight atomically. Existing history is not adopted/replayed.
+- `AcquireCommand` retains one connection and migration ownership across
+  independent histories. `Execute` commits each transactional batch, native
+  ledger rows and command receipts together. Exact replay checks the original
+  source/base/key and resumes only its durable prefix. Release ownership on
+  every path and reconstruct it after an uncertain commit acknowledgement.
+  See [independent migration owners](docs/operations.md#independent-migration-owners)
+  for limits, recovery and adoption requirements.
+
 - Loaded source is validated against complete ledger history under the advisory
   lock; source loading happens before lock acquisition. Keep artifacts immutable.
 - Applied files cannot be changed, renamed, removed, or reordered.

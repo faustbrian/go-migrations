@@ -5,6 +5,18 @@ and Semantic Versioning.
 
 ## Unreleased
 
+### Added
+
+- Add PostgreSQL namespaced histories through `Backend.ForNamespace`, bounded
+  read-only discovery through `ReadLedger`, atomic initial installation through
+  `InstallFresh`, and retained native migration commands through `AcquireCommand`.
+  Independent histories retain their original versions/checksums and share the
+  native advisory lock. Default runners continue to own `public.migrations`.
+  Resumable commands commit each batch's SQL, ledger and durable receipts
+  together; exact retries reconcile the original prefix without replaying it.
+  These APIs do not adopt existing foreign histories or accept nontransactional
+  command batches. Retain command records while recovery/replay is possible.
+
 ## 3.1.0 - 2026-10-15
 
 ### Added

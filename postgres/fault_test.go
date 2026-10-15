@@ -87,7 +87,7 @@ func TestPostgresOwnershipBoundaries(t *testing.T) {
 		)
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		objects, err := inspectObjects(ctx, database)
+		objects, err := inspectObjects(ctx, database, "")
 		if err != nil || len(objects) != 1 || objects[0].Identity != "table:public.users" {
 			t.Fatalf("inspectObjects() = %#v, %v, want catalog object", objects, err)
 		}
@@ -194,7 +194,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 	t.Run("insert", func(t *testing.T) {
 		database, mock := faultDatabase(t)
 		mock.ExpectExec("INSERT INTO public.migrations").WillReturnError(fault)
-		if err := insertDirty(context.Background(), database, migration, now); !errors.Is(err, fault) {
+		if err := insertDirty(context.Background(), database, migration, now, ""); !errors.Is(err, fault) {
 			t.Fatalf("insertDirty() error = %v", err)
 		}
 		assertFaultExpectations(t, mock)
@@ -217,7 +217,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 			} else {
 				expectation.WillReturnResult(test.result)
 			}
-			if err := markClean(context.Background(), database, migration, now, time.Millisecond); err == nil {
+			if err := markClean(context.Background(), database, migration, now, time.Millisecond, ""); err == nil {
 				t.Fatal("markClean() error = nil, want failure")
 			}
 			assertFaultExpectations(t, mock)
@@ -241,7 +241,7 @@ func TestLedgerMutationHelpersFailClosed(t *testing.T) {
 			} else {
 				expectation.WillReturnRows(test.rows)
 			}
-			if _, err := deleteRecord(context.Background(), database, migration); err == nil {
+			if _, err := deleteRecord(context.Background(), database, migration, ""); err == nil {
 				t.Fatal("deleteRecord() error = nil, want failure")
 			}
 			assertFaultExpectations(t, mock)

@@ -1037,6 +1037,23 @@ var (
 	// schema state than the package can safely retain.
 	ErrResourceLimit = errors.New("PostgreSQL migration resource limit exceeded")
 )
+var ErrCommandConflict = errors.New("PostgreSQL migration command conflict")
+    ErrCommandConflict means the exact command, source, base or prefix differs.
+
+var ErrCommandOutcomeUnknown = errors.New("PostgreSQL migration command outcome unknown")
+    ErrCommandOutcomeUnknown requires authoritative discovery under ownership;
+    cancellation or a failed commit acknowledgement is never rollback evidence.
+
+var ErrCommandSerialization = errors.New("migration command serialization forbidden")
+    ErrCommandSerialization denies diagnostic serialization of execution
+    inputs and retained keyed bindings. Native durable encoding is private and
+    SQL-free.
+
+var ErrInstallOutcomeUnknown = errors.New("PostgreSQL fresh installation outcome unknown")
+    ErrInstallOutcomeUnknown means fresh installation may have committed. Read
+    the authoritative ledger under migration ownership before deciding whether
+    installation succeeded; never blindly retry setup or infer rollback.
+
 var ErrInvalidSchemaSnapshot = errors.New("invalid PostgreSQL schema snapshot")
     ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a
     reviewed baseline contract.
@@ -1076,6 +1093,32 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
     not retried; uncertain lock-query failures discard the physical connection.
     A successful caller must Release the session even after operation failure.
 
+func (b *Backend) AcquireCommand(ctx context.Context) (*CommandSession, error)
+    AcquireCommand acquires native ownership without preparing any schema.
+    It preserves existing Runner and Session contracts and their global lock.
+
+func (backend *Backend) ForNamespace(namespace string) (*Backend, error)
+    ForNamespace derives an IO-free backend for one independent migration owner.
+    It borrows the same database and copies timeout policy without changing the
+    receiver. Namespace is canonical lowercase ASCII snake case, starts with a
+    letter, and contains 1..46 bytes. Empty, uppercase, ambiguous or oversized
+    names return ErrInvalidConfig; values are never normalized or truncated.
+
+    The exact ledger is public.golib_migrations_<namespace>. No other history is
+    discovered, adopted, renamed or merged. Retain the same namespace throughout
+    an owner's lifetime; changing it selects empty/different authority, not
+    an upgrade. Selection does not alter migration SQL, versions or checksums
+    and is not an authorization boundary. The default backend still owns
+    public.migrations.
+
+    Every operation, including inspection/baseline and atomic installation,
+    uses the selected ledger. Schema inspection remains database-wide:
+    only this ledger's objects are excluded; nonselected ledgers remain visible.
+    All owners retain the same native advisory lock so schema mutation stays
+    serialized. Derived backends are safe for concurrent use with immutable
+    configuration; the caller retains database ownership. Nil/zero receivers
+    deny without IO.
+
 func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error)
     Inspect returns a fingerprint of the package-selected catalog query using
     a separate leased connection, without taking the migration advisory lock or
@@ -1092,6 +1135,235 @@ func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, err
     PostgreSQL properties. A matching fingerprint therefore does not certify
     the whole schema/security state; review those omitted properties separately
     before adoption.
+
+func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.Migration, preflightSQL string) (records []migrations.Record, err error)
+    InstallFresh installs a complete ordered history and optional package-owned
+    preflight SQL in one transaction, retaining each original version/checksum.
+    Ledger creation, preflight effects and every migration roll back together
+    on execution failure. Existing nonempty history returns ErrLedgerConflict
+    before preflight execution; this is not an upgrade, baseline or automatic
+    retry API.
+
+    Only reviewed transactional SQL is accepted: preflight and migration SQL
+    must not contain transaction-control statements or nontransactional effects.
+    Empty histories, invalid ordering, no-transaction steps and combined SQL
+    exceeding MaxMigrationSourceBytes deny before database IO. Input is copied
+    for this call; callers must not mutate the slice concurrently with entry.
+
+    The stable native advisory lock covers discovery, execution and
+    finalization. Work and lock acquisition are bounded by backend
+    policy/context; independent cleanup uses a finite deadline. The database is
+    borrowed and stays open. Error formatting redacts SQL/driver diagnostics,
+    but traversal may expose underlying driver causes; do not log
+    unwrapped diagnostics. A commit or post-commit unlock failure returns
+    ErrInstallOutcomeUnknown and no success records. Nil/canceled contexts deny
+    before IO. Concurrent calls serialize through native migration ownership.
+    This API does not change Runner's individual-migration transaction
+    semantics.
+
+func (backend *Backend) ReadLedger(ctx context.Context) (records []migrations.Record, err error)
+    ReadLedger discovers the existing selected ledger history without preparing
+    schema or acquiring the migration advisory lock. A missing ledger yields
+    empty history; a non-table relation at that name returns ErrLedgerConflict.
+    It never discovers or adopts another ledger name.
+
+    Discovery uses one bounded repeatable-read, read-only transaction and the
+    same row validation and resource limits as Session.Records. Returned records
+    are caller-owned; dirty records remain dirty. The borrowed database stays
+    open. Error formatting is redacted; errors.Is preserves classification and
+    error traversal may expose driver causes. Do not log unwrapped diagnostics.
+    Concurrent calls are safe. Nil/canceled contexts deny before database IO.
+
+    The result is a snapshot, not migration ownership or permission to apply.
+    Compose BuildStatus or PlanUp with the exact source to inspect
+    compatibility; execution must rediscover and validate history under acquired
+    ownership. Runner.Status/Plan retain their existing locked preparation
+    behavior.
+
+type CatalogIdentity struct {
+	Kind                 CatalogKind
+	Schema, Name, Member string
+}
+    CatalogIdentity is one exact PostgreSQL identifier tuple. Each populated
+    identifier is 1..63 valid UTF-8 bytes without NUL; no normalization occurs.
+    Schema uses Schema alone; role uses Name alone; relation/function use
+    Schema+Name; column additionally requires Member. Other fields must be
+    empty.
+
+type CatalogKind uint8
+    CatalogKind identifies bounded PostgreSQL ownership metadata, not SQL.
+    Zero is invalid. Relations include indexes and other pg_class entries.
+
+const (
+	// CatalogSchema identifies a namespace, including an empty owned schema.
+	CatalogSchema CatalogKind = iota + 1
+	// CatalogRelation identifies one named relation/index in its exact schema.
+	CatalogRelation
+	// CatalogRole identifies one cluster role, with Schema and Member empty.
+	CatalogRole
+	// CatalogColumn identifies one non-dropped relation column in Member.
+	CatalogColumn
+	// CatalogFunction identifies any overload with the exact schema/name.
+	CatalogFunction
+)
+type CommandBatch struct {
+	Namespace  string
+	Migrations []migrations.Migration
+	Preflight  string
+}
+    CommandBatch is one atomic execution unit. Original native steps and
+    optional reviewed owner preflight commit together with their command
+    attribution. Only transactional migrations are supported. A fresh preflight
+    requires an empty original history and the owner's complete source in a
+    single batch. SQL is a reviewed deployment artifact: it must not contain
+    transaction control or nontransactional effects, or mutate migration
+    ownership state.
+
+func (CommandBatch) Format(s fmt.State, _ rune)
+    Format redacts preflight and migration SQL for every formatting verb.
+
+func (CommandBatch) LogValue() slog.Value
+    LogValue excludes original executable SQL.
+
+func (CommandBatch) MarshalJSON() ([]byte, error)
+    MarshalJSON denies accidental executable SQL serialization.
+
+func (CommandBatch) MarshalText() ([]byte, error)
+    MarshalText denies accidental executable SQL serialization.
+
+type CommandHistory struct {
+	Namespace string
+	Source    []migrations.Migration
+	Base      []migrations.Record
+}
+    CommandHistory describes one original native source and its original base.
+    Namespace empty selects public.migrations; other values use ForNamespace's
+    exact grammar. Base is never advanced by the caller during same-command
+    resume.
+
+func (CommandHistory) Format(s fmt.State, _ rune)
+    Format redacts original source SQL for every formatting verb.
+
+func (CommandHistory) LogValue() slog.Value
+    LogValue excludes original source SQL and base metadata.
+
+func (CommandHistory) MarshalJSON() ([]byte, error)
+    MarshalJSON denies accidental source serialization.
+
+func (CommandHistory) MarshalText() ([]byte, error)
+    MarshalText denies accidental source serialization.
+
+type CommandProgress struct {
+	// Has unexported fields.
+}
+    CommandProgress is an immutable native checkpoint. Its zero value is
+    invalid. Command records must be retained while resume or reconciliation is
+    possible.
+
+func (p CommandProgress) Base() []LedgerSnapshot
+    Base returns detached original physical-ledger snapshots, not current state.
+
+func (p CommandProgress) Complete() bool
+    Complete reports that every selected batch has durable native attribution.
+    It does not revalidate current schema or ledger state; Execute does that.
+
+func (p CommandProgress) Fingerprint() [32]byte
+    Fingerprint returns the exact original caller policy binding.
+
+func (CommandProgress) Format(s fmt.State, _ rune)
+    Format redacts retained command bindings for every formatting verb.
+
+func (p CommandProgress) ID() string
+    ID returns the original stable command identity, or empty for zero.
+
+func (p CommandProgress) IdempotencyDigest() [32]byte
+    IdempotencyDigest returns the original retained keyed binding for recovery.
+    It is not a credential or permission to renew/replace the original key.
+
+func (CommandProgress) LogValue() slog.Value
+    LogValue excludes retained keyed bindings and prefix metadata.
+
+func (CommandProgress) MarshalJSON() ([]byte, error)
+    MarshalJSON denies accidental retained-binding serialization.
+
+func (CommandProgress) MarshalText() ([]byte, error)
+    MarshalText denies accidental retained-binding serialization.
+
+func (p CommandProgress) Receipts() []CommandReceipt
+    Receipts returns a detached exact durable prefix in execution order.
+
+type CommandReceipt struct {
+	Namespace string
+	Record    migrations.Record
+}
+    CommandReceipt atomically attributes one canonical native record to a
+    command. Ordered receipts are an exact prefix, never inferred from schema
+    presence.
+
+type CommandRequest struct {
+	ID                string
+	Fingerprint       [32]byte
+	IdempotencyDigest [32]byte // purpose-bound keyed digest; never plaintext
+	Histories         []CommandHistory
+	Batches           []CommandBatch
+}
+    CommandRequest binds one globally unique canonical command to a keyed caller
+    fingerprint and complete original sources/base/ordered execution units.
+    Fingerprint is caller-owned policy binding, never a raw idempotency key.
+    Calls copy collections; callers must not mutate concurrently with entry.
+
+func (CommandRequest) Format(s fmt.State, _ rune)
+    Format redacts source SQL and policy bindings for every formatting verb.
+
+func (CommandRequest) LogValue() slog.Value
+    LogValue excludes SQL, keyed bindings and retained execution state.
+
+func (CommandRequest) MarshalJSON() ([]byte, error)
+    MarshalJSON denies accidental execution-input serialization.
+
+func (CommandRequest) MarshalText() ([]byte, error)
+    MarshalText denies accidental execution-input serialization.
+
+type CommandSession struct {
+	// Has unexported fields.
+}
+    CommandSession retains one native global ownership interval and physical
+    connection across independent namespaces. Methods serialize with Release;
+    each has a bounded context. Release is required; the database stays
+    borrowed.
+
+func (s *CommandSession) CatalogPresence(ctx context.Context, objects []CatalogIdentity) ([]bool, error)
+    CatalogPresence reads 1..4096 exact identities in one statement through the
+    retained native ownership connection, without preparing or reacquiring any
+    ledger. Results preserve every input position, including duplicates, and
+    belong to the caller. This is presence evidence, not schema adoption proof.
+    Cancellation or failure returns no partial results. PostgreSQL is borrowed;
+    method calls serialize with Execute/Release and obey the native timeout.
+
+func (s *CommandSession) Execute(ctx context.Context, req CommandRequest) (CommandProgress, error)
+    Execute validates every participating history before any write, then commits
+    original transactional SQL and native command-prefix attribution atomically.
+    Only the exact original request resumes; external matching progress
+    conflicts.
+
+func (s *CommandSession) ReadLedger(ctx context.Context, namespace string) ([]migrations.Record, error)
+    ReadLedger discovers the exact namespace through the retained connection.
+    Missing history stays empty; no schema is prepared or ownership reacquired.
+
+func (s *CommandSession) ReadProgress(ctx context.Context, id string) (CommandProgress, bool, error)
+    ReadProgress discovers only native attributed progress, without preparing
+    command state. Missing commands return exists=false and an invalid zero
+    value.
+
+func (s *CommandSession) Release(ctx context.Context) error
+    Release releases/discards the native connection; use a finite independent
+    cleanup context after cancellation. It does not close the borrowed database.
+
+type LedgerSnapshot struct {
+	Namespace string
+	Records   []migrations.Record
+}
+    LedgerSnapshot contains detached original records for one physical owner.
 
 type Option func(*Backend) error
     Option configures a PostgreSQL backend during construction only.

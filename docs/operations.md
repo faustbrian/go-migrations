@@ -71,6 +71,62 @@ ledger state. Source is loaded before acquisition and must remain an immutable
 deployment artifact. Both calls can create the owned ledger, and neither
 reserves state for a later execution call.
 
+## Atomic initial installation
+
+Some packages reserve shared prerequisites, such as PostgreSQL roles, which
+must roll back if any later schema step fails. Load the complete immutable
+history from that package's public source, then call
+`backend.InstallFresh(ctx, history, packagePreflightSQL)` instead of applying
+the steps individually. The native advisory lock serializes installation;
+ledger creation, preflight and every migration execute in one transaction.
+Each original version, name and checksum is retained. No package SQL needs to
+be copied or concatenated into another migration identity.
+
+Only reviewed transactional SQL is permitted, including the preflight. Do not
+supply transaction-control statements, no-transaction migrations or SQL with
+external/nontransactional effects. The combined SQL limit is 16 MiB and the
+history limit is 4,096 steps. An empty source is rejected. The borrowed pool
+remains open; operation, statement and lock deadlines use backend policy.
+
+Existing nonempty history returns `ErrLedgerConflict` before preflight runs,
+including an exact repeat of a completed installation. This operation cannot
+upgrade or silently adopt existing state. `ErrInstallOutcomeUnknown` means
+commit or post-commit ownership release was uncertain: stop, reacquire native
+ownership and reconcile the exact original ledger/source before taking another
+action. Never infer rollback from a connection error or blindly replay setup.
+Driver finalization still has the supervision requirements described above.
+Ordinary `Runner.Up` keeps its per-migration transactions. This API alone does
+not provide a reference exact-plan/resume protocol.
+
+## Independent migration owners
+
+Derive a backend with `backend.ForNamespace("outbox")` before constructing the
+runner or calling discovery, inspection or initial installation. This IO-free
+operation copies the borrowed pool and timeout policy without changing the
+original backend. The selected ledger is exactly
+`public.golib_migrations_outbox`; the default remains `public.migrations`.
+
+Namespaces contain 1..46 bytes of lowercase ASCII snake case, beginning with a
+letter. Digits are permitted after the first letter; consecutive or trailing
+underscores are rejected. Invalid names fail with `ErrInvalidConfig` before IO,
+without normalization or PostgreSQL identifier truncation. Re-deriving selects
+an absolute owner, not a nested namespace.
+
+Keep each owner's namespace stable for its lifetime. Selection does not discover,
+rename, copy or merge existing history. Changing namespaces can expose empty
+history and replay SQL; it is not a migration or an authorization boundary.
+Retain each source's original versions, names and checksums, even when different
+owners both begin at version one. SQL still addresses the shared database;
+separate histories do not make incompatible schema changes safe. Every owner
+uses the same native advisory lock to serialize mutation.
+
+Inspection and baseline fingerprints remain database-wide. Only the selected
+ledger and its catalog objects are excluded; other owners' ledgers remain
+visible. Review baselines after selecting the owner and stabilize other schema
+changes before recording them. Restore schema and every selected ledger from
+the same consistent backup. Namespace selection does not supply application
+exact-plan execution, command idempotency or ambiguous-outcome reconciliation.
+
 ## Dirty recovery
 
 Never edit the ledger manually. Stop deployment, inspect the exact migration
