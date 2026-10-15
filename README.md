@@ -144,6 +144,12 @@ only migration dependencies, and explicitly selects the runner operation. The
 adapter adds no migration policy, HTTP listener, management server, readiness
 check, retries, or long-lived resource ownership.
 
+For `github.com/faustbrian/go-service/v2`, use `NewV2(OptionsV2[C]{...})`
+and return `ExecutionV2` from `Prepare`. Its `Command()` uses native Service v2
+types. `New`, `Options`, and `Execution` retain their Service v1 types. Both
+bindings use the same `Runner` and error classifications; neither translates
+migration SQL, ledger rows or checksums.
+
 Migration-only components start before the task and stop in reverse order after
 it finishes or fails. A missing runner fails during plan construction. Use a
 dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or

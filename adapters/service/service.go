@@ -100,19 +100,26 @@ type Adapter[C any] struct {
 
 // New validates and constructs the standard migrate command adapter.
 func New[C any](options Options[C]) (*Adapter[C], error) {
-	if strings.TrimSpace(options.Summary) == "" {
-		return nil, &OptionsError{Field: "Summary", Reason: "must not be blank"}
-	}
-	if options.Load == nil {
-		return nil, &OptionsError{Field: "Load", Reason: "must not be nil"}
-	}
-	if options.Prepare == nil {
-		return nil, &OptionsError{Field: "Prepare", Reason: "must not be nil"}
-	}
-	if options.Execute == nil {
-		return nil, &OptionsError{Field: "Execute", Reason: "must not be nil"}
+	if err := validateOptions(options.Summary, options.Load != nil, options.Prepare != nil, options.Execute != nil); err != nil {
+		return nil, err
 	}
 	return &Adapter[C]{summary: options.Summary, load: options.Load, prepare: options.Prepare, execute: options.Execute}, nil
+}
+
+func validateOptions(summary string, load, prepare, execute bool) error {
+	if strings.TrimSpace(summary) == "" {
+		return &OptionsError{Field: "Summary", Reason: "must not be blank"}
+	}
+	if !load {
+		return &OptionsError{Field: "Load", Reason: "must not be nil"}
+	}
+	if !prepare {
+		return &OptionsError{Field: "Prepare", Reason: "must not be nil"}
+	}
+	if !execute {
+		return &OptionsError{Field: "Execute", Reason: "must not be nil"}
+	}
+	return nil
 }
 
 // Command returns the one-shot migrate registration. Preparation/execution

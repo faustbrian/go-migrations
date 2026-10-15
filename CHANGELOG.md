@@ -5,6 +5,15 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 3.1.0 - 2026-10-15
+
+### Added
+
+- Add `adapters/service.NewV2` with native Service v2 configuration, component
+  and command types. Existing Service v1 adapters remain supported. Both
+  bindings retain the caller-selected runner operation and migration-only
+  dependency lifecycle without changing migration SQL or history.
+
 ### Documentation
 
 - Clarify loaded-source versus locked-ledger snapshots, partial durable outcomes
