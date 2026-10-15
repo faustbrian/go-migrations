@@ -18,9 +18,12 @@ var ErrCommandOutcomeUnknown = errors.New("PostgreSQL migration command outcome 
 // Namespace empty selects public.migrations; other values use ForNamespace's
 // exact grammar. Base is never advanced by the caller during same-command resume.
 type CommandHistory struct {
+	// Namespace selects the original physical ledger; empty selects the default.
 	Namespace string
-	Source    []migrations.Migration
-	Base      []migrations.Record
+	// Source is the complete immutable history, not just the pending suffix.
+	Source []migrations.Migration
+	// Base is the original acknowledged history, never advanced during resume.
+	Base []migrations.Record
 }
 
 // CommandBatch is one atomic execution unit. Original native steps and optional
@@ -30,9 +33,12 @@ type CommandHistory struct {
 // SQL is a reviewed deployment artifact: it must not contain transaction
 // control or nontransactional effects, or mutate migration ownership state.
 type CommandBatch struct {
-	Namespace  string
+	// Namespace must match exactly one original CommandHistory owner.
+	Namespace string
+	// Migrations is the next contiguous pending prefix for that owner.
 	Migrations []migrations.Migration
-	Preflight  string
+	// Preflight is reviewed transactional setup for a complete fresh owner only.
+	Preflight string
 }
 
 // CommandRequest binds one globally unique canonical command to a keyed caller
@@ -40,24 +46,33 @@ type CommandBatch struct {
 // Fingerprint is caller-owned policy binding, never a raw idempotency key.
 // Calls copy collections; callers must not mutate concurrently with entry.
 type CommandRequest struct {
-	ID                string
-	Fingerprint       [32]byte
-	IdempotencyDigest [32]byte // purpose-bound keyed digest; never plaintext
-	Histories         []CommandHistory
-	Batches           []CommandBatch
+	// ID is a stable globally unique ASCII command identifier of 16..128 bytes.
+	ID string
+	// Fingerprint binds caller policy; it must be nonzero and remain unchanged.
+	Fingerprint [32]byte
+	// IdempotencyDigest is a purpose-bound keyed digest, never a plaintext key.
+	IdempotencyDigest [32]byte
+	// Histories is the complete original owner/source/base selection.
+	Histories []CommandHistory
+	// Batches is the original ordered execution plan, including committed steps.
+	Batches []CommandBatch
 }
 
 // LedgerSnapshot contains detached original records for one physical owner.
 type LedgerSnapshot struct {
+	// Namespace identifies the physical ledger from the original command.
 	Namespace string
-	Records   []migrations.Record
+	// Records retains detached original metadata, not renewed/current authority.
+	Records []migrations.Record
 }
 
 // CommandReceipt atomically attributes one canonical native record to a command.
 // Ordered receipts are an exact prefix, never inferred from schema presence.
 type CommandReceipt struct {
+	// Namespace identifies the owner whose transaction produced Record.
 	Namespace string
-	Record    migrations.Record
+	// Record is the canonical native ledger entry committed with the SQL effect.
+	Record migrations.Record
 }
 
 // CommandProgress is an immutable native checkpoint. Its zero value is invalid.

@@ -28,8 +28,14 @@ const (
 // Schema uses Schema alone; role uses Name alone; relation/function use
 // Schema+Name; column additionally requires Member. Other fields must be empty.
 type CatalogIdentity struct {
-	Kind                 CatalogKind
-	Schema, Name, Member string
+	// Kind selects the identifier tuple grammar and the catalog query.
+	Kind CatalogKind
+	// Schema names the exact PostgreSQL namespace; it is empty for roles.
+	Schema string
+	// Name names the object within Schema, or the cluster role for CatalogRole.
+	Name string
+	// Member names the column for CatalogColumn and is otherwise empty.
+	Member string
 }
 
 func validCatalogIdentity(o CatalogIdentity) bool {
