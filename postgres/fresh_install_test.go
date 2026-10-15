@@ -47,6 +47,7 @@ func TestInstallFreshRejectsInvalidInputWithoutIO(t *testing.T) {
 	if _, err := backend.InstallFresh(ctx, []migrations.Migration{first}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled install admitted", err)
 	}
+	//nolint:staticcheck // SA1012: exercise the documented nil-context rejection.
 	if _, err := backend.InstallFresh(nil, []migrations.Migration{first}, ""); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatal("nil context admitted", err)
 	}

@@ -42,6 +42,20 @@ func TestCommandStoredJSONBudgets(t *testing.T) {
 	}
 }
 
+func TestCommandAndNamespaceASCIIGrammar(t *testing.T) {
+	const identifierBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+	const namespaceBytes = "abcdefghijklmnopqrstuvwxyz0123456789_"
+	for value := range 256 {
+		character := byte(value)
+		if validCommandID("command_identity"+string([]byte{character})) != strings.ContainsRune(identifierBytes, rune(character)) {
+			t.Fatalf("command grammar differs for byte %d", value)
+		}
+		if validNamespace("a"+string([]byte{character})+"b") != strings.ContainsRune(namespaceBytes, rune(character)) {
+			t.Fatalf("namespace grammar differs for byte %d", value)
+		}
+	}
+}
+
 func FuzzCommandStoredJSON(f *testing.F) {
 	for _, seed := range []string{"null", "{}", "[]", "]", "{", `{"Version":1}`, `[[[[[[[[[0]]]]]]]]]`} {
 		f.Add([]byte(seed))

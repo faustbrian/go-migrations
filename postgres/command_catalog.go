@@ -91,7 +91,7 @@ func (s *CommandSession) CatalogPresence(ctx context.Context, objects []CatalogI
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "discover owned catalog presence", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]bool, 0, len(objects))
 	for rows.Next() {
 		var position int

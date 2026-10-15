@@ -45,7 +45,7 @@ func validNamespace(namespace string) bool {
 			underscore = true
 			continue
 		}
-		if !(value >= 'a' && value <= 'z' || value >= '0' && value <= '9') {
+		if (value < 'a' || value > 'z') && (value < '0' || value > '9') {
 			return false
 		}
 		underscore = false

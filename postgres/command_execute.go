@@ -12,7 +12,6 @@ import (
 	gooseadapter "github.com/faustbrian/go-migrations/v3/internal/goose"
 )
 
-const commandTable = "public.golib_migration_commands"
 const commandTableMarker = "golib/migrations/command/v1"
 const createCommandTableSQL = `CREATE TABLE public.golib_migration_commands (
  command_id text PRIMARY KEY CHECK(octet_length(command_id) BETWEEN 16 AND 128),
