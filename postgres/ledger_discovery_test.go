@@ -104,6 +104,7 @@ func TestReadLedgerRejectsInvalidOrCanceledOwnersBeforeIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	//lint:ignore SA1012 Exercise the documented nil-context rejection before IO.
 	//nolint:staticcheck // SA1012: exercise the documented nil-context rejection.
 	if _, err := backend.ReadLedger(nil); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatal("nil context admitted")
