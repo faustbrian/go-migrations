@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-migrations",
+  "module": ".",
+  "package": "internal/goose",
+  "gate": "mutation",
+  "input_digest": "sha256:02b7619c8aa6e1c1a25aa07c6e91768468274e86743c3a2fb31d9dcbab992b3a",
+  "verifier_digest": "sha256:390cf4085a0063fe5dcaa29ce942ea4cb8c7876347da90376b65dc8c5c811104",
+  "result": "passed",
+  "report_digest": "sha256:faba700f96157e5889bbe23dbd1caaca641c6cce6a4ad49a7a87e53296087f80",
+  "environment": {
+    "CGO_ENABLED": "1",
+    "GOARCH": "arm64",
+    "GOOS": "darwin",
+    "GOVERSION": "go1.27.2",
+    "gremlins_binary_sha256": "sha256:520abfa224dd544a3e959985a36611b930d37a69ec77fb3ad14b57caa392d7eb"
+  },
+  "completed_at": "2026-10-15T05:00:51.957381Z"
+}

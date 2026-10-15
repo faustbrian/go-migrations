@@ -20,7 +20,7 @@ relocation; previously reviewed fingerprints must be regenerated.
    This is a selected catalog view, not a complete schema/security inventory:
    review grants, ownership, RLS enabled/forced flags, policy roles and other
    omitted properties separately. Neither inspection method acquires the
-   migration advisory lock; quiescing unrelated DDL remains an operator duty.
+   migration advisory lock; stopping unrelated DDL remains an operator duty.
 5. Call `Inspect` and record the lowercase fingerprint in reviewed source or
    deployment configuration. Treat a changed fingerprint as a new review.
 6. Create the first Go migration with a strictly greater version.

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-migrations",
+  "module": ".",
+  "package": "adapters/service",
+  "gate": "mutation",
+  "input_digest": "sha256:6981d17d08c84c519a13a060ee9345efea63246a59c2a3336ae442f9c19ff650",
+  "verifier_digest": "sha256:390cf4085a0063fe5dcaa29ce942ea4cb8c7876347da90376b65dc8c5c811104",
+  "result": "passed",
+  "report_digest": "sha256:d4e0e40d8d4249f83067423248ce3141f2d15251246ac84eb022394e62129ac0",
+  "environment": {
+    "CGO_ENABLED": "1",
+    "GOARCH": "arm64",
+    "GOOS": "darwin",
+    "GOVERSION": "go1.27.2",
+    "gremlins_binary_sha256": "sha256:520abfa224dd544a3e959985a36611b930d37a69ec77fb3ad14b57caa392d7eb"
+  },
+  "completed_at": "2026-10-15T05:00:27.761864Z"
+}
