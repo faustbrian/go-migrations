@@ -17,6 +17,12 @@ and Semantic Versioning.
   These APIs do not adopt existing foreign histories or accept nontransactional
   command batches. Retain command records while recovery/replay is possible.
 
+## 3.2.0 - 2026-10-22
+
+### Changed
+
+- Publish the current source and documentation with a fresh immutable tag.
+
 ## 3.1.0 - 2026-10-15
 
 ### Added
