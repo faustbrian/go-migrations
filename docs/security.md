@@ -3,7 +3,7 @@
 [Documentation index](README.md) · [Repository entry](../README.md)
 
 The repository-specific, versioned [threat model](threat-model.md) inventories
-assets, trust boundaries, controls, accepted risks, and v3 release
+assets, trust boundaries, controls, accepted risks, and v4 release
 requirements. This page provides the corresponding operator guidance.
 
 Migration files are trusted deployment artifacts with database-owner power.
@@ -57,7 +57,7 @@ exhaustion within caller-selected finite timeout budgets remains a deployment
 capacity concern. Those risks require platform access controls, auditing,
 backups, and incident response rather than migration parsing.
 
-No known unowned Critical or High finding remains in the v3 source.
+No known unowned Critical or High finding remains in the reviewed v4 source.
 The standard-library transaction and cleanup cancellation limitation and trusted
 observer callback boundary are owned explicitly in the threat model. V3.0.0
 is published; each application must separately validate its

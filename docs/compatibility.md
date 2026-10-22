@@ -66,8 +66,11 @@ instead of maintaining two adapter generations. The adapter adds no behavior
 of its own: command name, one-shot ordering, cleanup and error classification
 are unchanged. For a definition that registers only the migrate command, exit
 codes and the treatment of parent cancellation as a clean exit are also
-unchanged. A definition that also configures maintenance commands adopts the
-command-error classification go-service introduced in 1.1.4; review the
+unchanged. The whole service definition moves to go-service/v2, not only the
+migrate command. A definition that also configures maintenance commands, or
+any command that declares secret options, adopts the command-error
+classification go-service introduced in 1.1.4, so those commands' failure exit
+codes can change; review the
 [go-service changelog](https://github.com/faustbrian/go-service/blob/main/CHANGELOG.md)
 from 1.1.3 through 2.0.0 for that case.
 

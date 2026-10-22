@@ -94,12 +94,15 @@ func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
 			}
 			// Service classifies cooperative parent cancellation as a clean exit.
 			// The migration adapter must retain that classification and still join
-			// the task before cleanup with an independent, bounded context.
-			if (failure == "none" || failure == "cancel") && code != 0 {
-				t.Fatalf("successful migration exit = %d", code)
+			// the task before cleanup with an independent, bounded context. The
+			// other codes characterize Service v2 classification for a
+			// migrate-only definition, which the compatibility guide promises.
+			wantCodes := map[string]int{
+				"none": 0, "cancel": 0, "load": 78, "prepare": 70, "runner": 70,
+				"start": 75, "execute": 1, "stop": 70,
 			}
-			if failure != "none" && failure != "cancel" && code == 0 {
-				t.Fatalf("%s failure reported success", failure)
+			if code != wantCodes[failure] {
+				t.Fatalf("%s exit = %d, want %d", failure, code, wantCodes[failure])
 			}
 			want := []string{"load", "prepare", "start", "execute", "stop"}
 			switch failure {

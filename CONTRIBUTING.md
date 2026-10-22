@@ -33,7 +33,7 @@ that hide a failing package.
 
 ## Verification
 
-Use Go 1.27.2 for verification; the module/API minimum remains Go 1.27.0.
+Use Go 1.27.3 for verification; the module/API minimum remains Go 1.27.0.
 An isolated checkout needs no sibling repositories or coordination goal files.
 Begin with deterministic tests and one active target when its ledger-decoding
 boundary changes, using a disposable cache for each bounded session:
@@ -51,8 +51,8 @@ boundary changes, using a disposable cache for each bounded session:
 
 The deterministic command executes fuzz seeds/corpus, not active fuzzing.
 It omits `integration` tests and does not qualify live PostgreSQL semantics.
-Install the verified public v2.4.0 binary archive for your platform from
-[go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.4.0),
+Install the verified public v2.5.1 binary archive for your platform from
+[go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.5.1),
 checking `checksums.txt` against `.golib.yaml` and the archive against that
 checksum set. Put the extracted `golib` binary on `PATH`; do not build Tools
 from source. CI verifies the same public release while checking out its pinned
