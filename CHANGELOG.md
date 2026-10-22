@@ -19,6 +19,16 @@ and Semantic Versioning.
   v3 and v4 runners serialize on the same lock and share history without
   alignment.
 
+## 3.2.1 - 2026-10-22
+
+### Fixed
+
+- Preserve pure context cancellation versus cancellation joined with independent
+  migration failures. PostgreSQL operation categories no longer add synthetic
+  causes; SQL execution retains redacted independent failure branches while
+  preserving `errors.Is` categories and hiding SQL and driver diagnostics.
+  No migration SQL, stored history, checkpoints or retry policy changes.
+
 ## 3.2.0 - 2026-10-22
 
 ### Added

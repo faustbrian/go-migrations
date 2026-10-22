@@ -35,6 +35,25 @@ type structuredDatabaseDiagnostic struct {
 	Password string
 }
 
+func TestDatabaseFailureKeepsClassificationOutOfCauseTree(t *testing.T) {
+	t.Parallel()
+	private := errors.New("private independent failure")
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("wrapped: %w", context.Canceled), errors.Join(context.Canceled, private), private} {
+		err := databaseFailure("inspect migration ledger", cause)
+		if !errors.Is(err, ErrDatabaseOperationFailed) || !errors.Is(err, cause) {
+			t.Fatal("stable or original cause classification was lost")
+		}
+		if errors.Unwrap(err) != cause {
+			t.Error("classification marker obscured the original single cause")
+		}
+		for _, format := range []string{"%s", "%q", "%v", "%+v", "%#v"} {
+			if strings.Contains(fmt.Sprintf(format, err), "private") {
+				t.Errorf("format %s exposed driver diagnostics", format)
+			}
+		}
+	}
+}
+
 func (structuredDatabaseDiagnostic) Error() string { return "driver operation failed" }
 
 // These ownership checks run before parallel fixtures that can wait on a

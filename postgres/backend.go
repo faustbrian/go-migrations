@@ -87,10 +87,13 @@ func (err *databaseError) Format(state fmt.State, verb rune) {
 	_, _ = fmt.Fprint(state, err.Error())
 }
 
-// Unwrap exposes the classification and original driver cause to errors.Is/As.
-// This is an explicit sensitive-diagnostic boundary, not a redacted cause chain.
-func (err *databaseError) Unwrap() []error {
-	return []error{ErrDatabaseOperationFailed, err.cause}
+// Is exposes the operation category without adding a synthetic failure cause.
+func (*databaseError) Is(target error) bool { return target == ErrDatabaseOperationFailed }
+
+// Unwrap exposes the original driver cause to errors.Is/As. This remains an
+// explicit sensitive-diagnostic boundary, not a redacted cause chain.
+func (err *databaseError) Unwrap() error {
+	return err.cause
 }
 
 func databaseFailure(operation string, cause error) error {
