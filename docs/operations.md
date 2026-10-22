@@ -44,6 +44,13 @@ Loss of the lock-owning connection releases PostgreSQL advisory ownership; the
 failed operation still returns an error, and a later job must reacquire the lock
 and revalidate complete history before retrying or recovering.
 
+Advisory-lock acquisition retains a query failure alongside concurrent caller
+cancellation. Transactional apply/down errors also retain meaningful explicit
+rollback failures; still call `Release` so an uncertain physical session is
+discarded. Already-completed transactions add no cleanup failure. Only errors
+returned by `database/sql` can be preserved: its internal automatic rollback
+does not surface its driver's cleanup error.
+
 Go's standard `database/sql` commit, rollback, row-close, and connection-close
 APIs cannot accept a context once driver finalization or cleanup begins. Use a
 maintained driver with finite PostgreSQL server and network timeouts, supervise

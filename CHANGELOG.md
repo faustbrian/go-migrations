@@ -17,6 +17,16 @@ and Semantic Versioning.
   These APIs do not adopt existing foreign histories or accept nontransactional
   command batches. Retain command records while recovery/replay is possible.
 
+## 3.2.2 - 2026-10-22
+
+### Fixed
+
+- Retain advisory-lock query failures when caller cancellation arrives at the
+  same time. Preserve explicit transaction rollback failures alongside the
+  original apply/down failure, and discard uncertain physical sessions on
+  release. Already-completed transactions do not add spurious cleanup errors.
+  Migration SQL, history, checkpoints, timeouts and retry policy are unchanged.
+
 ## 3.2.1 - 2026-10-22
 
 ### Fixed
