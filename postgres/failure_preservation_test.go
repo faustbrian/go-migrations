@@ -21,12 +21,13 @@ func TestAcquirePreservesQueryFailureDuringCancellation(t *testing.T) {
 		cause  error
 		cancel bool
 	}{
-		"caller cancellation":     {context.Canceled, true},
-		"dependency deadline":     {context.DeadlineExceeded, false},
-		"database failure":        {independent, false},
-		"coincident cancellation": {independent, true},
-		"joined cancellation":     {errors.Join(context.Canceled, independent), true},
-		"reversed join":           {errors.Join(independent, context.Canceled), true},
+		"caller cancellation":        {context.Canceled, true},
+		"dependency deadline":        {context.DeadlineExceeded, false},
+		"deadline with cancellation": {context.DeadlineExceeded, true},
+		"database failure":           {independent, false},
+		"coincident cancellation":    {independent, true},
+		"joined cancellation":        {errors.Join(context.Canceled, independent), true},
+		"reversed join":              {errors.Join(independent, context.Canceled), true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
