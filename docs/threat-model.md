@@ -97,7 +97,9 @@ observers are separate caller-owned trust boundaries.
   No-transaction execution writes dirty state before SQL and requires explicit
   checksum-bound recovery after an uncertain result.
 - Migration SQL execution errors expose only `ErrExecutionFailed` and context
-  cancellation classification. PostgreSQL operation errors render a fixed
+  cancellation classification. Redacted cause trees retain independent failures
+  joined with cancellation; category matches do not add synthetic causes.
+  PostgreSQL operation errors render a fixed
   operation and `ErrDatabaseOperationFailed`; inspecting their wrapped driver
   cause is an explicit diagnostic boundary.
 - Observer events carry operation, phase, version, duration, and a redacted

@@ -17,6 +17,16 @@ and Semantic Versioning.
   These APIs do not adopt existing foreign histories or accept nontransactional
   command batches. Retain command records while recovery/replay is possible.
 
+## 3.2.1 - 2026-10-22
+
+### Fixed
+
+- Preserve pure context cancellation versus cancellation joined with independent
+  migration failures. PostgreSQL operation categories no longer add synthetic
+  causes; SQL execution retains redacted independent failure branches while
+  preserving `errors.Is` categories and hiding SQL and driver diagnostics.
+  No migration SQL, stored history, checkpoints or retry policy changes.
+
 ## 3.2.0 - 2026-10-22
 
 ### Changed

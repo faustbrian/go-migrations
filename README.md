@@ -119,6 +119,13 @@ non-transactional work can instead leave a visible dirty record when the
 external outcome is not safely reversible. Stable error categories support
 `errors.Is`, while wrapped causes retain operational detail.
 
+PostgreSQL operation and SQL execution categories match through `errors.Is`
+without becoming extra branches in the cause tree. SQL execution redacts each
+non-context failure to `ErrExecutionFailed`, preserving joined cancellation
+and independent failures without exposing driver diagnostics. A context match
+alone does not prove caller interruption: check the caller's context and all
+remaining causes before treating a failure as a clean cancellation.
+
 Go's standard `database/sql` transaction finalization and cleanup calls cannot
 accept a context once driver cleanup begins. Use maintained drivers with
 finite server and network timeouts plus a supervised deployment-process hard
