@@ -20,14 +20,15 @@ This source tree contains the `github.com/faustbrian/go-migrations/v4` module.
 V3.0.0 introduces the `public.migrations` ledger name. Published v1 and v2
 releases remain available under their original module paths.
 Application adoption is a separate deployment boundary. The minimum
-supported toolchain is Go 1.27.0; verification uses Go 1.27.2.
+supported language version is Go 1.27.0; build with Go 1.27.3 or newer, which
+fixes GO-2026-6809 in `crypto/x509`.
 
 ## Install
 
 Install the v4 module with:
 
 ```sh
-go get github.com/faustbrian/go-migrations/v4@v4
+go get github.com/faustbrian/go-migrations/v4@v4.0.0
 ```
 
 V3 consumers upgrade by replacing `/v3` with `/v4` in imports and moving

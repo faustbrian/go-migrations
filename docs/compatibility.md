@@ -59,7 +59,13 @@ binding and the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
 `adapters/service` now has one binding on `github.com/faustbrian/go-service/v2`:
 use `New`, `Options` and `Execution`, which take the native Service v2 types.
 Replace `/v3` with `/v4` in imports and move the migrate command's service
-composition to Service v2 in the same change.
+composition to Service v2 in the same change. The binding was removed so
+migration commands share the one Service lifecycle the rest of the fleet uses
+instead of maintaining two adapter generations. The adapter adds no behavior
+of its own: command name, one-shot ordering, cleanup and error classification
+are unchanged, while process exit codes, cancellation classification and
+command-line handling are those of Service v2. Review the go-service v1 to v2
+migration notes for those runtime differences.
 
 The `public.migrations` ledger, row format, checksum framing, schema
 fingerprint, namespaced and command tables, and the advisory lock key are
