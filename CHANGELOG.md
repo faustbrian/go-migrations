@@ -5,6 +5,8 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 4.0.0 - 2026-10-22
+
 ### Removed
 
 - Remove the `migrationsservice` package and the Service v1 adapter binding,
