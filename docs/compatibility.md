@@ -3,7 +3,8 @@
 [Documentation index](README.md) · [Repository entry](../README.md)
 
 This source contains the v4 line at `github.com/faustbrian/go-migrations/v4`.
-Published releases keep their original module paths.
+Published releases keep their original module paths. The latest published v1,
+v2 and v3 releases remain supported; v4 becomes supported once published.
 The module follows semantic versioning, and root releases
 use `v<version>` tags. Compatible defect and security fixes may be backported to
 a supported major; incompatible behavior requires a new major version and
@@ -63,9 +64,12 @@ composition to Service v2 in the same change. The binding was removed so
 migration commands share the one Service lifecycle the rest of the fleet uses
 instead of maintaining two adapter generations. The adapter adds no behavior
 of its own: command name, one-shot ordering, cleanup and error classification
-are unchanged, while process exit codes, cancellation classification and
-command-line handling are those of Service v2. Review the go-service v1 to v2
-migration notes for those runtime differences.
+are unchanged. For a definition that registers only the migrate command, exit
+codes and the treatment of parent cancellation as a clean exit are also
+unchanged. A definition that also configures maintenance commands adopts the
+command-error classification go-service introduced in 1.1.4; review the
+[go-service changelog](https://github.com/faustbrian/go-service/blob/main/CHANGELOG.md)
+from 1.1.3 through 2.0.0 for that case.
 
 The `public.migrations` ledger, row format, checksum framing, schema
 fingerprint, namespaced and command tables, and the advisory lock key are

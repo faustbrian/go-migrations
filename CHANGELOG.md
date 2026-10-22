@@ -11,8 +11,9 @@ and Semantic Versioning.
   together with the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
   `adapters/service` keeps one binding on `github.com/faustbrian/go-service/v2`
   as `New`, `Options` and `Execution`, so migrate commands share the fleet's
-  single Service lifecycle. The adapter adds no behavior; exit codes,
-  cancellation classification and command-line handling follow Service v2.
+  single Service lifecycle. The adapter adds no behavior; migrate-only
+  definitions keep their exit codes and cancellation handling, and see the
+  compatibility guide for definitions that also configure maintenance.
 
 ### Changed
 
