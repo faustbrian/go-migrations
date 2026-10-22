@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 )
 
 type freshInstaller interface {

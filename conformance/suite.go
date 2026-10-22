@@ -14,7 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 // Harness supplies engine-specific SQL and isolated runner construction.

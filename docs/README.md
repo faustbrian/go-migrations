@@ -2,16 +2,15 @@
 
 [Repository entry](../README.md) · [Versioned ecosystem](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
 
-This source contains the v3 `migrations` module for deterministic,
+This source contains the v4 `migrations` module for deterministic,
 engine-neutral database migrations; v1 and v2 remain available. The
 root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
-`adapters/service` adapts an explicit runner to a one-shot service command;
-`migrationsservice` preserves the released API as a compatibility facade,
+`adapters/service` adapts an explicit runner to a one-shot Service v2 command,
 and `conformance` is the backend testing helper. The caller owns the source,
 observer, and database; operations accept context cancellation and the module
 starts no background work. The threat model records the security controls and
-accepted risks for the v3 boundary.
+accepted risks for the v4 boundary.
 
 ## Getting started
 
@@ -19,8 +18,8 @@ accepted risks for the v3 boundary.
 - [Executable deployment-job example](../examples/job/main.go)
 - [PostgreSQL integration](go-postgres.md)
 - [Architecture and engine contract](architecture.md)
-- [V3 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3)
-- [V3 backend conformance helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3/conformance)
+- [V4 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4)
+- [V4 backend conformance helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4/conformance)
 
 ## Operations
 
@@ -59,5 +58,4 @@ and its [Persistence and durability family](https://github.com/faustbrian/go-lib
 - [Operations and recovery](operations.md) — `docs/operations.md`
 - [Package map](package-map.md) — `docs/package-map.md`
 - [Security](security.md) — `docs/security.md`
-- [Source documentation audit](source-documentation-audit.md) — `docs/source-documentation-audit.md`
 - [Threat model](threat-model.md) — `docs/threat-model.md`

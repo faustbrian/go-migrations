@@ -48,10 +48,5 @@ migration-only lifecycle components; execution selects the runner operation.
 The adapter does not import a database backend, add migration behavior, or
 initialize dependencies used by other service roles.
 
-The released `migrationsservice` package is a compatibility facade over this
-canonical implementation. Both paths preserve their own named type identities;
-the facade translates structured construction errors while sharing stable
-sentinels and the same one-shot command behavior.
-
 Choose the next guide in the [documentation index](README.md)
 or return to the [repository entry](../README.md) for installation and ownership.

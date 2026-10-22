@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 func TestRunnerRecoverMarksVerifiedDirtyMigrationApplied(t *testing.T) {

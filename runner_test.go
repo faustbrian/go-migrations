@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 func TestRunnerUpLocksRevalidatesAndAppliesPlan(t *testing.T) {

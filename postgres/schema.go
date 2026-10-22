@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 // ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a

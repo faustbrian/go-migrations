@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 func TestNewMigrationCreatesImmutableCanonicalIdentity(t *testing.T) {

@@ -1,5 +1,5 @@
 // Package migrationsservice adapts an explicit migrations.Runner to the
-// standard service migrate command.
+// standard Service v2 migrate command.
 //
 // The adapter owns no database or migration semantics. Callers load their
 // configuration, construct the runner and resource components, and select the
@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"strings"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	service "github.com/faustbrian/go-service"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	service "github.com/faustbrian/go-service/v2"
 )
 
 var (

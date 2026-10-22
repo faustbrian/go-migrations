@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 )
 
 func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
@@ -80,13 +80,13 @@ func TestBackendSessionSerializesWorkWithAdvisoryLock(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(publishedLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(publishedLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).
-		WithArgs(sqlmock.AnyArg()).
+		WithArgs(publishedLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"pg_advisory_unlock"}).AddRow(true))
 
 	session, err := backend.Acquire(context.Background())
@@ -645,3 +645,8 @@ func assertExpectations(t *testing.T, mock sqlmock.Sqlmock) {
 		t.Fatalf("database expectations: %v", err)
 	}
 }
+
+// publishedLockKey is the advisory lock key every released major has used.
+// Runners from different majors must contend for the same key so that a
+// consumer migration window never runs two schema owners concurrently.
+const publishedLockKey = int64(0x676f6d6967726174)

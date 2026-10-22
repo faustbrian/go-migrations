@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	gooseadapter "github.com/faustbrian/go-migrations/v3/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	gooseadapter "github.com/faustbrian/go-migrations/v4/internal/goose"
 )
 
 const commandTableMarker = "golib/migrations/command/v1"

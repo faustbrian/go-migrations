@@ -5,7 +5,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-risk_selected-blue)](CONTRIBUTING.md#verification)
 [![Mutation](https://img.shields.io/badge/mutation-optional_local%2Fselected_scheduled-blue)](CONTRIBUTING.md#verification)
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v3.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v4.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
 [![Go](https://img.shields.io/badge/go-1.27.0-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -16,7 +16,7 @@ checksums, baselines, recovery, and the `public.migrations` ledger.
 Goose is an internal, pinned SQL execution detail and never appears in the
 public API.
 
-This source tree contains the `github.com/faustbrian/go-migrations/v3` module.
+This source tree contains the `github.com/faustbrian/go-migrations/v4` module.
 V3.0.0 introduces the `public.migrations` ledger name. Published v1 and v2
 releases remain available under their original module paths.
 Application adoption is a separate deployment boundary. The minimum
@@ -24,13 +24,16 @@ supported toolchain is Go 1.27.0; verification uses Go 1.27.2.
 
 ## Install
 
-Install the published v3.0.1 release with:
+Install the v4 module with:
 
 ```sh
-go get github.com/faustbrian/go-migrations/v3@v3.0.1
+go get github.com/faustbrian/go-migrations/v4@v4
 ```
 
-Existing consumers can remain on published v1 or v2 releases. V2 consumers
+V3 consumers upgrade by replacing `/v3` with `/v4` in imports and moving
+service composition to the single Service v2 adapter (see
+[migration](docs/compatibility.md#v3-to-v4)). The ledger, checksums and
+advisory lock are unchanged, so no database alignment is required. V2 consumers
 upgrade by replacing `/v2` with `/v3` in migration imports, stopping older
 runners, and manually aligning the database ledger before starting v3. V1
 consumers must also provide the bounded, cancellation-aware `SourceFileSystem` contract and review the
@@ -59,15 +62,14 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
-The v3 module uses these import paths.
+The v4 module uses these import paths.
 
 | Import path | Use |
 | --- | --- |
-| `github.com/faustbrian/go-migrations/v3` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
-| `github.com/faustbrian/go-migrations/v3/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/v3/adapters/service` | Adapt a caller-constructed runner to the standard one-shot `service` migrate command. |
-| `github.com/faustbrian/go-migrations/v3/migrationsservice` | Preserve the released service-adapter API while migrating imports to `adapters/service`. |
-| `github.com/faustbrian/go-migrations/v3/conformance` | Verify an alternative backend against the public engine contract in tests. |
+| `github.com/faustbrian/go-migrations/v4` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
+| `github.com/faustbrian/go-migrations/v4/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
+| `github.com/faustbrian/go-migrations/v4/adapters/service` | Adapt a caller-constructed runner to the standard one-shot Service v2 migrate command. |
+| `github.com/faustbrian/go-migrations/v4/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
 
@@ -144,21 +146,14 @@ only migration dependencies, and explicitly selects the runner operation. The
 adapter adds no migration policy, HTTP listener, management server, readiness
 check, retries, or long-lived resource ownership.
 
-For `github.com/faustbrian/go-service/v2`, use `NewV2(OptionsV2[C]{...})`
-and return `ExecutionV2` from `Prepare`. Its `Command()` uses native Service v2
-types. `New`, `Options`, and `Execution` retain their Service v1 types. Both
-bindings use the same `Runner` and error classifications; neither translates
-migration SQL, ledger rows or checksums.
+The adapter uses `github.com/faustbrian/go-service/v2` types: `New(Options[C]{...})`
+returns an adapter whose `Prepare` callback yields an `Execution`. It does not
+translate migration SQL, ledger rows or checksums.
 
 Migration-only components start before the task and stop in reverse order after
 it finishes or fails. A missing runner fails during plan construction. Use a
 dedicated deployment job and select `Runner.Up`, `Plan`, `Status`, `Down`, or
 recovery behavior explicitly according to the reviewed operation.
-
-The v3 `migrationsservice` path is a deprecated compatibility facade for the
-v1 API. It preserves generic signatures, named type identities, error
-sentinels and traversal, command semantics, and caller-owned runner and resource
-lifecycle while delegating to `adapters/service`.
 
 ## Integrations and companion packages
 
@@ -211,10 +206,10 @@ Read the [migration format](docs/migration-format.md),
 
 Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
-maintainer references. The v3
-[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3),
+maintainer references. The v4
+[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4),
 [executable example](examples/job/main.go), backend
-[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v3/conformance),
+[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4/conformance),
 [FAQ and troubleshooting](docs/faq.md), [performance baselines](docs/benchmarks.md),
 [compatibility policy](COMPATIBILITY.md), [changelog](CHANGELOG.md),
 [support guide](SUPPORT.md), and [private security-reporting process](SECURITY.md)

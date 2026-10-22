@@ -16,12 +16,11 @@ api:
   baselines:
     - module: .
       mode: go-doc
-      path: api/v3.txt
+      path: api/v4.txt
       packages:
         - .
         - ./adapters/service
         - ./conformance
-        - ./migrationsservice
         - ./postgres
 operations:
   - module: .

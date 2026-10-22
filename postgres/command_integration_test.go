@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 

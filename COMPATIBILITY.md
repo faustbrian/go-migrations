@@ -2,13 +2,12 @@
 
 This repository follows semantic versioning. Root releases use `v<version>`
 tags, such as the published `v1.1.0`; package directories are not independently
-versioned modules and do not use directory-prefixed tags. The v3 module uses
-the `/v3` module suffix without a version-specific source directory.
+versioned modules and do not use directory-prefixed tags. The v4 module uses
+the `/v4` module suffix without a version-specific source directory.
 
-The stable v1 contract is published from its original module path. This source
-contains the published compatible v3.0.1 patch at the `/v3` module path,
-the latest published v3 release. V2.0.0 remains
-available with its original module path and ledger name.
+Published releases keep their original module paths. This source contains the
+v4 line; v4 removed the superseded service adapter surfaces and keeps the v3
+ledger, checksum and advisory-lock contracts.
 Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
 require a new major version. The latest patch in each supported major is the
@@ -20,5 +19,5 @@ resource ownership, ordering, retry/idempotency semantics, and documented
 defaults. A compile-compatible change can still be behaviorally breaking.
 
 Specification-backed modules MUST NOT diverge from their declared standards.
-Ambiguities require documented decisions and stable tests. Deprecated APIs
-follow [`DEPRECATION.md`](DEPRECATION.md).
+Ambiguities require documented decisions and stable tests. API replacement
+follows [`DEPRECATION.md`](DEPRECATION.md).

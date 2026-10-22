@@ -11,7 +11,7 @@ import (
 	"database/sql"
 	"errors"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 	pressly "github.com/pressly/goose/v3"
 )
 

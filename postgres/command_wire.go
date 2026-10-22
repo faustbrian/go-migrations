@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 const maxCommandBytes = 16 << 20

@@ -4,7 +4,12 @@ set -eu
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$root"
 
-if grep -Ein 'goose' api/v3.txt; then
+baseline=api/v4.txt
+if [ ! -s "$baseline" ]; then
+    echo "Public API snapshot is missing: $baseline" >&2
+    exit 1
+fi
+if grep -Ein 'goose' "$baseline"; then
     echo "Goose identity escaped into a public API snapshot" >&2
     exit 1
 fi

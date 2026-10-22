@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	gooseadapter "github.com/faustbrian/go-migrations/v3/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	gooseadapter "github.com/faustbrian/go-migrations/v4/internal/goose"
 )
 
 // ErrInstallOutcomeUnknown means fresh installation may have committed. Read

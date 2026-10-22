@@ -5,6 +5,22 @@ and Semantic Versioning.
 
 ## Unreleased
 
+### Removed
+
+- Remove the `migrationsservice` package and the Service v1 adapter binding,
+  together with the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
+  `adapters/service` keeps one binding on `github.com/faustbrian/go-service/v2`
+  as `New`, `Options` and `Execution`.
+
+### Changed
+
+- Move the module to `github.com/faustbrian/go-migrations/v4`. The ledger,
+  checksum framing, schema fingerprint and advisory lock key are unchanged, so
+  v3 and v4 runners serialize on the same lock and share history without
+  alignment.
+
+## 3.2.0 - 2026-10-22
+
 ### Added
 
 - Add PostgreSQL namespaced histories through `Backend.ForNamespace`, bounded
@@ -16,8 +32,6 @@ and Semantic Versioning.
   together; exact retries reconcile the original prefix without replaying it.
   These APIs do not adopt existing foreign histories or accept nontransactional
   command batches. Retain command records while recovery/replay is possible.
-
-## 3.2.0 - 2026-10-22
 
 ### Changed
 

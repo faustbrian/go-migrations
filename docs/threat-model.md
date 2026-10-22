@@ -4,7 +4,9 @@
 
 **Model version:** 1.3
 
-**Applies to:** `github.com/faustbrian/go-migrations/v3` source
+**Applies to:** `github.com/faustbrian/go-migrations/v3` source; v4 removes the
+superseded service adapter surfaces without changing engine boundaries and has
+not been separately re-reviewed
 
 **Reviewed:** 2026-10-01
 
@@ -45,7 +47,7 @@ checks; application deployment and adoption remain separate boundaries.
 | Locking and lifecycle | Competing jobs, cancellation, connection loss, and cleanup failure | Connection-bound advisory lock, post-lock revalidation, finite acquisition and release timeouts |
 | Baseline and recovery | Reviewed fingerprints, dirty outcomes, and operator decisions | Serializable baseline transaction, checksum-bound recovery, explicit failure on ambiguity |
 | Observability | Operation, phase, version, duration, and failures | Structured events without SQL; observer panics are contained |
-| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, immutable v1 baseline, reviewed v3 release metadata |
+| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, go-doc API baseline, reviewed v3 release metadata |
 
 Migration files and explicit `Migration` values are trusted deployment
 artifacts with the privileges of the supplied database role. Filesystem
@@ -108,7 +110,7 @@ observers are separate caller-owned trust boundaries.
 
 ## Open release-blocking findings
 
-No known unowned Critical or High finding remains in the v3 source.
+No known unowned Critical or High finding remains in the reviewed v3 source.
 The context-free standard-library transaction and cleanup boundary is owned as
 MIGRATIONS-RISK-007; synchronous observer work is owned as MIGRATIONS-RISK-008.
 V2.0.0 is published. The v1-to-v2 application adoption boundary is recorded in

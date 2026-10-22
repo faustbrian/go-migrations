@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 )
 
 // MIG-02: database DDL and cluster-level role reservations are both

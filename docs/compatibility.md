@@ -2,9 +2,8 @@
 
 [Documentation index](README.md) · [Repository entry](../README.md)
 
-The published v1 and v2 lines remain available. This source contains the v3
-line at `github.com/faustbrian/go-migrations/v3`. The compatible v3.0.1 patch
-is the latest published v3 release.
+This source contains the v4 line at `github.com/faustbrian/go-migrations/v4`.
+Published releases keep their original module paths.
 The module follows semantic versioning, and root releases
 use `v<version>` tags. Compatible defect and security fixes may be backported to
 a supported major; incompatible behavior requires a new major version and
@@ -52,6 +51,21 @@ The aligned v1 fixture proves row compatibility, not automatic table adoption.
 V3 consumers must replace `/v2` with `/v3` in Go imports. The Go API is
 otherwise unchanged from v2; the ledger rename and Laravel relocation
 requirement are the breaking persisted-contract changes.
+
+## v3 to v4
+
+Version 4 removes the `migrationsservice` package, the Service v1 adapter
+binding and the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
+`adapters/service` now has one binding on `github.com/faustbrian/go-service/v2`:
+use `New`, `Options` and `Execution`, which take the native Service v2 types.
+Replace `/v3` with `/v4` in imports and move the migrate command's service
+composition to Service v2 in the same change.
+
+The `public.migrations` ledger, row format, checksum framing, schema
+fingerprint, namespaced and command tables, and the advisory lock key are
+unchanged. V3 and v4 runners contend for the same lock, so a mixed rollout
+cannot run two schema owners concurrently, and no ledger alignment is needed.
+Roll back by reverting the consumer revision as a whole.
 
 Choose the next guide in the [documentation index](README.md)
 or return to the [repository entry](../README.md) for installation and ownership.

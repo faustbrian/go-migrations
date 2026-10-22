@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
+	migrations "github.com/faustbrian/go-migrations/v4"
 )
 
 // ErrCommandConflict means the exact command, source, base or prefix differs.

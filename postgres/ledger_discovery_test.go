@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 )
 
 // MIG-04: discovery must not acquire migration ownership or prepare a ledger.

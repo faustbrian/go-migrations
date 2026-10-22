@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 )
 
 type namespaceSelector interface {

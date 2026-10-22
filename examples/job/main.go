@@ -16,8 +16,8 @@ import (
 	"os"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v3"
-	"github.com/faustbrian/go-migrations/v3/postgres"
+	migrations "github.com/faustbrian/go-migrations/v4"
+	"github.com/faustbrian/go-migrations/v4/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
