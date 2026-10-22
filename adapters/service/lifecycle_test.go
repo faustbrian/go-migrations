@@ -14,7 +14,7 @@ import (
 )
 
 func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
-	for _, failure := range []string{"none", "load", "prepare", "runner", "start", "execute", "stop", "cancel"} {
+	for _, failure := range []string{"none", "load", "prepare", "runner", "start", "execute", "stop", "cancel", "cancel+stop"} {
 		t.Run(failure, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -55,7 +55,7 @@ func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
 							if _, bounded := ctx.Deadline(); ctx.Err() != nil || !bounded {
 								t.Errorf("cleanup context is not live and bounded: %v", ctx.Err())
 							}
-							if failure == "stop" {
+							if failure == "stop" || failure == "cancel+stop" {
 								return fail
 							}
 							return nil
@@ -72,7 +72,7 @@ func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
 						t.Error("selected runner changed")
 						return errors.New("unexpected runner")
 					}
-					if failure == "cancel" {
+					if failure == "cancel" || failure == "cancel+stop" {
 						cancel()
 						return ctx.Err()
 					}
@@ -92,14 +92,15 @@ func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
 			if strings.Contains(output.String(), environmentMarker) {
 				t.Fatalf("%s diagnostics disclosed an environment value", failure)
 			}
-			// Service classifies cooperative parent cancellation as a clean exit.
-			// The migration adapter must retain that classification and still join
-			// the task before cleanup with an independent, bounded context. The
-			// other codes characterize Service v3 classification for a
-			// migrate-only definition, which the compatibility guide promises.
+			// Service classifies cooperative parent cancellation as a clean exit
+			// only when cleanup succeeds. The migration adapter must retain that
+			// classification and still join the task before cleanup with an
+			// independent, bounded context. The other codes characterize Service v3
+			// classification for a migrate-only definition, which the compatibility
+			// guide promises.
 			wantCodes := map[string]int{
-				"none": 0, "cancel": 0, "load": 78, "prepare": 70, "runner": 70,
-				"start": 75, "execute": 1, "stop": 70,
+				"none": 0, "cancel": 0, "cancel+stop": 70, "load": 78, "prepare": 70,
+				"runner": 70, "start": 75, "execute": 1, "stop": 70,
 			}
 			if code != wantCodes[failure] {
 				t.Fatalf("%s exit = %d, want %d", failure, code, wantCodes[failure])

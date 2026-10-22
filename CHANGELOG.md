@@ -14,8 +14,10 @@ and Semantic Versioning.
   `adapters/service` keeps one binding on `github.com/faustbrian/go-service/v3`
   as `New`, `Options` and `Execution`, so migrate commands share the fleet's
   single Service lifecycle. The adapter adds no behavior; migrate-only
-  definitions keep their exit codes and cancellation handling for ordinary
-  invocations. The whole service definition moves to Service v3; see the
+  definitions keep their exit codes for ordinary invocations. Parent
+  cancellation is a clean exit only when cleanup succeeds, so a failed
+  shutdown, shutdown timeout or startup rollback under cancellation now keeps
+  a non-zero code. The whole service definition moves to Service v3; see the
   compatibility guide for the argument-grammar changes and for commands with
   maintenance or secret options, whose exit codes can change.
 
