@@ -28,6 +28,16 @@ and Semantic Versioning.
   v3 and v4 runners serialize on the same lock and share history without
   alignment.
 
+## 3.2.2 - 2026-10-22
+
+### Fixed
+
+- Retain advisory-lock query failures when caller cancellation arrives at the
+  same time. Preserve explicit transaction rollback failures alongside the
+  original apply/down failure, and discard uncertain physical sessions on
+  release. Already-completed transactions do not add spurious cleanup errors.
+  Migration SQL, history, checkpoints, timeouts and retry policy are unchanged.
+
 ## 3.2.1 - 2026-10-22
 
 ### Fixed

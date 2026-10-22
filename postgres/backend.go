@@ -275,11 +275,7 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 			advisoryLockKey,
 		).Scan(&acquired); err != nil {
 			_ = discardConnection(connection)
-			if contextErr := acquireCtx.Err(); contextErr != nil {
-				return nil, contextErr
-			}
-
-			return nil, databaseFailure("try PostgreSQL advisory lock", err)
+			return nil, databaseContextFailure(acquireCtx, "try PostgreSQL advisory lock", err)
 		}
 		if acquired {
 			return &session{
@@ -455,6 +451,8 @@ func boundedOperationContext(ctx context.Context, timeout time.Duration) (contex
 
 // Apply commits one migration under its transaction policy. A timeout-reset
 // error can accompany already completed nontransactional SQL and a clean row.
+// Transactional failures retain explicit rollback errors; Release discards a
+// physical session whose rollback outcome is uncertain.
 func (session *session) Apply(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -480,6 +478,7 @@ func (session *session) Apply(ctx context.Context, migration migrations.Migratio
 
 // Rollback removes one clean row after down SQL under its transaction policy.
 // Nontransactional execution marks it dirty before SQL, not after a failure.
+// Transactional failures retain explicit cleanup errors for the same reason as Apply.
 func (session *session) Rollback(ctx context.Context, migration migrations.Migration) (migrations.Record, error) {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -592,12 +591,12 @@ func (session *session) rollbackTransaction(
 	ctx context.Context,
 	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
-) (migrations.Record, error) {
+) (record migrations.Record, err error) {
 	transaction, err := session.connection.BeginTx(ctx, nil)
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "begin rollback transaction", err)
 	}
-	defer func() { _ = transaction.Rollback() }()
+	defer session.rollbackTransactionCleanup(transaction, &err)
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
 		return migrations.Record{}, err
 	}
@@ -605,7 +604,7 @@ func (session *session) rollbackTransaction(
 	if err := adapter.RollbackTx(ctx, transaction); err != nil {
 		return migrations.Record{}, err
 	}
-	record, err := deleteRecord(ctx, transaction, migration, session.namespace)
+	record, err = deleteRecord(ctx, transaction, migration, session.namespace)
 	if err != nil {
 		return migrations.Record{}, err
 	}
@@ -700,12 +699,12 @@ func (session *session) applyTransaction(
 	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
 	startedAt time.Time,
-) (migrations.Record, error) {
+) (record migrations.Record, err error) {
 	transaction, err := session.connection.BeginTx(ctx, nil)
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "begin migration transaction", err)
 	}
-	defer func() { _ = transaction.Rollback() }()
+	defer session.rollbackTransactionCleanup(transaction, &err)
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
 		return migrations.Record{}, err
 	}
@@ -735,6 +734,15 @@ func (session *session) applyTransaction(
 		duration,
 		false,
 	)
+}
+
+func (session *session) rollbackTransactionCleanup(transaction *sql.Tx, result *error) {
+	if err := transaction.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		// database/sql marks a Tx done even when its driver's rollback fails.
+		// The server outcome is then unknown, so Release must discard it.
+		session.tainted = true
+		*result = errors.Join(*result, databaseFailure("rollback migration transaction", err))
+	}
 }
 
 func (session *session) applyWithoutTransaction(
