@@ -10,7 +10,7 @@ import (
 
 	migrations "github.com/faustbrian/go-migrations/v4"
 	migrationsservice "github.com/faustbrian/go-migrations/v4/adapters/service"
-	service "github.com/faustbrian/go-service/v2"
+	service "github.com/faustbrian/go-service/v3"
 )
 
 func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
@@ -95,7 +95,7 @@ func TestMigrationPreservesSelectedOperationAndCleanup(t *testing.T) {
 			// Service classifies cooperative parent cancellation as a clean exit.
 			// The migration adapter must retain that classification and still join
 			// the task before cleanup with an independent, bounded context. The
-			// other codes characterize Service v2 classification for a
+			// other codes characterize Service v3 classification for a
 			// migrate-only definition, which the compatibility guide promises.
 			wantCodes := map[string]int{
 				"none": 0, "cancel": 0, "load": 78, "prepare": 70, "runner": 70,

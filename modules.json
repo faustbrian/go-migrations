@@ -92,10 +92,10 @@
       "version": "4.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [
-        "github.com/faustbrian/go-cli",
+        "github.com/faustbrian/go-cli/v2",
         "github.com/faustbrian/go-correlation",
         "github.com/faustbrian/go-identifier/v2",
-        "github.com/faustbrian/go-service/v2"
+        "github.com/faustbrian/go-service/v3"
       ],
       "reverse_owned_dependencies": [
         "github.com/faustbrian/go-authorization",
@@ -150,7 +150,7 @@
         "package_selection": {
           "github.com/faustbrian/go-migrations/v4": "Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination.",
           "github.com/faustbrian/go-migrations/v4/conformance": "Use when implementing or replacing a migration engine to verify the complete public runner contract.",
-          "github.com/faustbrian/go-migrations/v4/adapters/service": "Use to adapt an explicitly constructed runner and operation to the standard one-shot Service v2 migrate command.",
+          "github.com/faustbrian/go-migrations/v4/adapters/service": "Use to adapt an explicitly constructed runner and operation to the standard one-shot Service v3 migrate command.",
           "github.com/faustbrian/go-migrations/v4/postgres": "Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting."
         },
         "lifecycle_status": "active",

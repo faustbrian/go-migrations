@@ -699,7 +699,7 @@ func (version Version) String() string
 package migrationsservice // import "github.com/faustbrian/go-migrations/v4/adapters/service"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
-Service v2 migrate command.
+Service v3 migrate command.
 
 The adapter owns no database or migration semantics. Callers load
 their configuration, construct the runner and resource components,

@@ -6,7 +6,7 @@ This source contains the v4 `migrations` module for deterministic,
 engine-neutral database migrations; v1 and v2 remain available. The
 root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
-`adapters/service` adapts an explicit runner to a one-shot Service v2 command,
+`adapters/service` adapts an explicit runner to a one-shot Service v3 command,
 and `conformance` is the backend testing helper. The caller owns the source,
 observer, and database; operations accept context cancellation and the module
 starts no background work. The threat model records the security controls and

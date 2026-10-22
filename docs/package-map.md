@@ -14,7 +14,7 @@ Internal packages and non-releasable fixtures are intentionally excluded.
 | Import path | Responsibility |
 | --- | --- |
 | [`github.com/faustbrian/go-migrations/v4`](../baseline.go) | Use for immutable migration values, filesystem sources, planning, status, baselines, recovery, and engine-neutral runner coordination. |
-| [`github.com/faustbrian/go-migrations/v4/adapters/service`](../adapters/service/service.go) | Use to adapt an explicitly constructed runner and operation to the standard one-shot Service v2 migrate command. |
+| [`github.com/faustbrian/go-migrations/v4/adapters/service`](../adapters/service/service.go) | Use to adapt an explicitly constructed runner and operation to the standard one-shot Service v3 migrate command. |
 | [`github.com/faustbrian/go-migrations/v4/conformance`](../conformance/suite.go) | Use when implementing or replacing a migration engine to verify the complete public runner contract. |
 | [`github.com/faustbrian/go-migrations/v4/postgres`](../postgres/backend.go) | Use for PostgreSQL advisory locking, ledger persistence, transactional execution, recovery, and schema fingerprinting. |
 

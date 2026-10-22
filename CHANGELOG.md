@@ -11,12 +11,13 @@ and Semantic Versioning.
 
 - Remove the `migrationsservice` package and the Service v1 adapter binding,
   together with the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
-  `adapters/service` keeps one binding on `github.com/faustbrian/go-service/v2`
+  `adapters/service` keeps one binding on `github.com/faustbrian/go-service/v3`
   as `New`, `Options` and `Execution`, so migrate commands share the fleet's
   single Service lifecycle. The adapter adds no behavior; migrate-only
-  definitions keep their exit codes and cancellation handling. The whole
-  service definition moves to Service v2; see the compatibility guide for
-  commands with maintenance or secret options, whose exit codes can change.
+  definitions keep their exit codes and cancellation handling for ordinary
+  invocations. The whole service definition moves to Service v3; see the
+  compatibility guide for the argument-grammar changes and for commands with
+  maintenance or secret options, whose exit codes can change.
 
 ### Changed
 

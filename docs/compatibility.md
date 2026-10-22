@@ -57,22 +57,27 @@ requirement are the breaking persisted-contract changes.
 
 Version 4 removes the `migrationsservice` package, the Service v1 adapter
 binding and the `NewV2`, `OptionsV2`, `ExecutionV2` and `AdapterV2` names.
-`adapters/service` now has one binding on `github.com/faustbrian/go-service/v2`:
-use `New`, `Options` and `Execution`, which take the native Service v2 types.
+`adapters/service` now has one binding on `github.com/faustbrian/go-service/v3`:
+use `New`, `Options` and `Execution`, which take the native Service v3 types.
 Replace `/v3` with `/v4` in imports and move the migrate command's service
-composition to Service v2 in the same change. The binding was removed so
+composition to Service v3 in the same change. The binding was removed so
 migration commands share the one Service lifecycle the rest of the fleet uses
 instead of maintaining two adapter generations. The adapter adds no behavior
 of its own: command name, one-shot ordering, cleanup and error classification
 are unchanged. For a definition that registers only the migrate command, exit
-codes and the treatment of parent cancellation as a clean exit are also
-unchanged. The whole service definition moves to go-service/v2, not only the
-migrate command. A definition that also configures maintenance commands, or
+codes for ordinary invocations and the treatment of parent cancellation as a
+clean exit are also unchanged. Because the migrate command declares no
+options, Service v3 parses it with the canonical go-cli v2 grammar:
+`migrate --` now runs the migration instead of exiting 2, and
+`migrate extra --help` renders help; see the
+[Service v3 migration table](https://github.com/faustbrian/go-service/blob/main/docs/adoption.md#migrating-to-v3).
+The whole service definition moves to go-service/v3, not only the migrate
+command. A definition that also configures maintenance commands, or
 any command that declares secret options, adopts the command-error
 classification go-service introduced in 1.1.4, so those commands' failure exit
 codes can change; review the
 [go-service changelog](https://github.com/faustbrian/go-service/blob/main/CHANGELOG.md)
-from 1.1.3 through 2.0.0 for that case.
+from 1.1.3 through 3.0.0 for that case.
 
 The `public.migrations` ledger, row format, checksum framing, schema
 fingerprint, namespaced and command tables, and the advisory lock key are

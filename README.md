@@ -32,7 +32,7 @@ go get github.com/faustbrian/go-migrations/v4@v4.0.0
 ```
 
 V3 consumers upgrade by replacing `/v3` with `/v4` in imports and moving
-service composition to the single Service v2 adapter (see
+service composition to the single Service v3 adapter (see
 [migration](docs/compatibility.md#v3-to-v4)). The ledger, checksums and
 advisory lock are unchanged, so no database alignment is required. V2 consumers
 upgrade by replacing `/v2` with `/v3` in migration imports, stopping older
@@ -69,7 +69,7 @@ The v4 module uses these import paths.
 | --- | --- |
 | `github.com/faustbrian/go-migrations/v4` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
 | `github.com/faustbrian/go-migrations/v4/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/v4/adapters/service` | Adapt a caller-constructed runner to the standard one-shot Service v2 migrate command. |
+| `github.com/faustbrian/go-migrations/v4/adapters/service` | Adapt a caller-constructed runner to the standard one-shot Service v3 migrate command. |
 | `github.com/faustbrian/go-migrations/v4/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
@@ -154,7 +154,7 @@ only migration dependencies, and explicitly selects the runner operation. The
 adapter adds no migration policy, HTTP listener, management server, readiness
 check, retries, or long-lived resource ownership.
 
-The adapter uses `github.com/faustbrian/go-service/v2` types: `New(Options[C]{...})`
+The adapter uses `github.com/faustbrian/go-service/v3` types: `New(Options[C]{...})`
 returns an adapter whose `Prepare` callback yields an `Execution`. It does not
 translate migration SQL, ledger rows or checksums.
 

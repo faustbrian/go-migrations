@@ -9,7 +9,7 @@ import (
 
 	migrations "github.com/faustbrian/go-migrations/v4"
 	migrationsservice "github.com/faustbrian/go-migrations/v4/adapters/service"
-	service "github.com/faustbrian/go-service/v2"
+	service "github.com/faustbrian/go-service/v3"
 )
 
 func TestCommandPreservesOneShotOrderingAndCallerOwnership(t *testing.T) {
