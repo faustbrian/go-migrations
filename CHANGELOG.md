@@ -32,11 +32,33 @@ These changes form the v5.0.0 major.
   failures on a live connection are still reported.
 - Return `migrations.ErrInvalidVersion` for a zero `Migration` passed to
   `Apply` or `Rollback` instead of an internal adapter error.
+- Reject a ledger row whose `finished_at` is PostgreSQL `infinity` or
+  `-infinity` with `migrations.ErrInvalidRecord`. The package never writes
+  such a value; it can only come from a direct ledger edit.
 - Move the module to `github.com/faustbrian/go-migrations/v5`. The ledger,
   checksum framing, schema fingerprint and advisory lock key are unchanged, so
   v4 and v5 runners serialize on the same lock and share history without
   alignment. Multi-statement migration SQL still executes as one request over
   the simple query protocol.
+
+### Migrating dependents
+
+- go-idempotency, go-lease, go-rate-limit, go-authorization and
+  go-queue-control-plane export go-migrations v4 types such as
+  `GoMigration() migrations.Migration` and `MigrationSource()
+  migrations.Source`, so each needs a new major that moves to v5. Release
+  go-migrations v5 first, then those libraries, then go-scheduler, then the
+  applications. Migration checksums are identical across v4 and v5, so
+  rebuilding a v4 migration with `NewMigration` from the same version, name,
+  mode and SQL yields the same identity and needs no ledger change. See the
+  [compatibility guide](docs/compatibility.md#migrating-dependents).
+
+### Compatibility notes
+
+- `github.com/lib/pq` remains in `go.sum` only because the test-only
+  testcontainers PostgreSQL module's own tests reference it. No package in
+  this module, including its tests, imports it, and `go.mod` does not require
+  it.
 
 ### Removed
 

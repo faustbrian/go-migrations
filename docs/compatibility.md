@@ -124,6 +124,31 @@ The `public.migrations` ledger, row format, checksum framing, schema
 fingerprint, namespaced and command tables, and the advisory lock key are
 unchanged. V4 and v5 runners contend for the same lock and share history
 without alignment. Roll back by reverting the consumer revision as a whole.
+The `testdata/interop` harness proves this against the published v4.0.0: v5
+reads, plans, recovers, appends to and resumes a ledger, namespaced ledger and
+command that v4 wrote, and both majors contend for one lock.
+
+A ledger row whose `finished_at` is PostgreSQL `infinity` or `-infinity` is
+rejected with `migrations.ErrInvalidRecord`. The package never writes such a
+value; it can only come from a direct ledger edit.
+
+### Migrating dependents
+
+go-idempotency, go-lease, go-rate-limit, go-authorization and
+go-queue-control-plane export go-migrations v4 types, such as
+`GoMigration() migrations.Migration` and `MigrationSource()
+migrations.Source`. A v5 consumer cannot use those values, so each library
+needs a new major release that moves to v5. Release in this order:
+
+1. go-migrations v5.
+2. go-idempotency, go-lease, go-rate-limit, go-authorization and
+   go-queue-control-plane.
+3. go-scheduler.
+4. The applications.
+
+Checksums are identical across v4 and v5. Rebuilding a v4 migration with v5
+`NewMigration` from the same version, name, transaction mode and SQL yields
+the same checksum, so already-applied history stays valid without alignment.
 
 Choose the next guide in the [documentation index](README.md)
 or return to the [repository entry](../README.md) for installation and ownership.

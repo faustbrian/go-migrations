@@ -1127,3 +1127,22 @@ func assertFaultExpectations(t *testing.T, mock *MockConn) {
 		t.Fatalf("database expectations: %v", err)
 	}
 }
+
+func TestRecordsRejectsInfiniteCompletionTime(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"infinity", "-infinity"} {
+		t.Run(value, func(t *testing.T) {
+			session, mock := faultSession(t, 0)
+			migration := faultMigration(t, migrations.TransactionModeDefault)
+			mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(
+				NewMockRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).
+					AddRow("migration", 1, "fault_boundary", migration.Checksum().String(), time.Now().UTC(), value, 1, false),
+			)
+			if _, err := session.Records(context.Background()); !errors.Is(err, migrations.ErrInvalidRecord) {
+				t.Fatalf("Records(%s finished_at) error = %v, want ErrInvalidRecord", value, err)
+			}
+			assertFaultExpectations(t, mock)
+		})
+	}
+}
