@@ -95,7 +95,9 @@ Full checks retain all four declared fuzz targets at 10000x/20m each, the
 100ms benchmark operation, the original engine-boundary operation and all
 module gates. Real integration tests retain engine conformance and
 transaction/ledger assertions. The scheduled carrier uses the shared bounded
-route, not an automatic full or PostgreSQL-major-matrix campaign. Online
+route, not an automatic full campaign. A separate CI job runs the PostgreSQL
+integration suite and the `testdata/interop` v4/v5 harness on PostgreSQL 14
+through 18; set `POSTGRES_VERSION` to reproduce one major locally. Online
 specification checking fetches authority/errata sources when applicable.
 Release rehearsal can run locally. Report unavailable or failing commands;
 bounded checks alone do not establish release qualification.

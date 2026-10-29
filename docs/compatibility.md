@@ -12,9 +12,9 @@ migration guidance in `CHANGELOG.md`.
 
 The source format and PostgreSQL schema fingerprint are explicitly versioned as
 v1 contracts. Ledger history must remain readable across compatible releases.
-Supported PostgreSQL major versions are 14, 15, 16, 17, and 18. Current hosted
-CI exercises PostgreSQL 18; it does not establish a complete supported-version
-matrix. PostgreSQL majors are removed only after upstream ends support and
+Supported PostgreSQL major versions are 14, 15, 16, 17, and 18. Hosted CI runs
+the PostgreSQL integration suite and the v4/v5 interoperability harness on each
+of those majors. PostgreSQL majors are removed only after upstream ends support and
 the removal is documented. The Go version is declared by `go.mod`.
 
 The PostgreSQL backend is driven by pgx v5 through a caller-owned
