@@ -15,9 +15,11 @@ if grep -Ein 'goose|database/sql|\*sql\.|lib/pq|pgx/v5/stdlib' "$baseline"; then
 fi
 
 # pgx is the only database driver. database/sql, its driver adapters and the
-# retired Goose engine must not return through production code or tests.
+# retired Goose engine must not return through production code or tests. The
+# non-releasable v4/v5 interop harness drives published v4, which still takes
+# a *sql.DB, so it is the one excluded directory (testdata/interop).
 forbidden_imports="$(
-    grep -RInE --include='*.go' \
+    grep -RInE --include='*.go' --exclude-dir=interop \
         '"(database/sql|database/sql/driver|github\.com/lib/pq|github\.com/jackc/pgx/v5/stdlib|github\.com/pressly/goose[^"]*|github\.com/DATA-DOG/go-sqlmock)"' \
         . || true
 )"
