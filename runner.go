@@ -162,7 +162,7 @@ func WithObserver(observer Observer) Option {
 // WithUnlockTimeout replaces the default 30-second, best-effort release
 // deadline with a positive duration. Release uses context.WithoutCancel so
 // caller cancellation does not skip its attempt. It cannot forcibly bound a
-// blocking observer, uncooperative backend or context-free driver finalizer.
+// blocking observer or a backend that ignores its context.
 func WithUnlockTimeout(timeout time.Duration) Option {
 	return func(runner *Runner) error {
 		if timeout <= 0 {

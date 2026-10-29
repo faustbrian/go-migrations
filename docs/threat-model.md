@@ -14,7 +14,7 @@ and session discard now take a detached finite context, which narrows
 MIGRATIONS-RISK-007. The v4 review found no new asset or trust boundary for
 the removed `migrationsservice` facade and Service v1 binding.
 
-**Reviewed:** 2026-10-22
+**Reviewed:** 2026-10-29
 
 **Owner:** `go-migrations` maintainers
 
@@ -53,7 +53,7 @@ checks; application deployment and adoption remain separate boundaries.
 | Locking and lifecycle | Competing jobs, cancellation, connection loss, and cleanup failure | Connection-bound advisory lock, post-lock revalidation, finite acquisition and release timeouts |
 | Baseline and recovery | Reviewed fingerprints, dirty outcomes, and operator decisions | Serializable baseline transaction, checksum-bound recovery, explicit failure on ambiguity |
 | Observability | Operation, phase, version, duration, and failures | Structured events without SQL; observer panics are contained |
-| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, go-doc API baseline, reviewed v4 release metadata |
+| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, go-doc API baseline, reviewed v5 release metadata |
 
 Migration files and explicit `Migration` values are trusted deployment
 artifacts with the privileges of the supplied database role. Filesystem
@@ -118,7 +118,7 @@ observers are separate caller-owned trust boundaries.
 
 ## Open release-blocking findings
 
-No known unowned Critical or High finding remains in the reviewed v4 source.
+No known unowned Critical or High finding remains in the reviewed v5 source.
 Driver blocking during commit and cleanup is owned as MIGRATIONS-RISK-007;
 synchronous observer work is owned as MIGRATIONS-RISK-008.
 V2.0.0 is published. The v1-to-v2 application adoption boundary is recorded in

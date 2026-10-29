@@ -16,12 +16,15 @@ These changes form the v5.0.0 major.
   `pgx/v5/stdlib`. Options, `Backend` and command-session methods and error
   categories are otherwise unchanged. Each session still leases one connection
   from `Acquire` until `Release`, so size the pool for concurrent sessions plus
-  inspection and discovery.
-- Close and remove from the pool, rather than release, any session whose lock,
-  rollback or statement-timeout state is uncertain. Rollback and that close
-  now use a detached 30-second deadline instead of context-free `database/sql`
-  calls, and a transaction whose connection pgx already closed after caller
-  cancellation no longer adds a rollback failure to a pure cancellation.
+  inspection and discovery. Unwrapped driver causes are now pgx and pgconn
+  errors; `database/sql` sentinels such as `sql.ErrConnDone`, `sql.ErrTxDone`
+  and `driver.ErrBadConn` no longer appear in error chains.
+- Run transaction rollback and the close that discards an uncertain session
+  on a detached 30-second deadline instead of context-free `database/sql`
+  calls. A transaction whose connection pgx already closed after caller
+  cancellation no longer adds a rollback failure to a pure cancellation, and
+  a failed baseline rollback now discards the session instead of returning it
+  to the pool.
 - Return `migrations.ErrInvalidVersion` for a zero `Migration` passed to
   `Apply` or `Rollback` instead of an internal adapter error.
 - Move the module to `github.com/faustbrian/go-migrations/v5`. The ledger,

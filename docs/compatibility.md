@@ -96,7 +96,10 @@ otherwise unchanged. Replace `/v4` with `/v5` in imports and construct the
 backend from the pool the application already owns, for example
 `pgxpool.New(ctx, url)` or the pool behind a `go-postgres` client, instead of
 opening a `database/sql` handle through `github.com/jackc/pgx/v5/stdlib`. The
-module no longer depends on Goose or any `database/sql` driver.
+module no longer depends on Goose or any `database/sql` driver. Unwrapped
+driver causes are now pgx and pgconn errors; `database/sql` sentinels such as
+`sql.ErrConnDone`, `sql.ErrTxDone` and `driver.ErrBadConn` no longer appear in
+error chains.
 
 Each session leases one pool connection from `Acquire` until `Release`, as it
 leased one `*sql.Conn` before. A pool must allow one connection per concurrent
