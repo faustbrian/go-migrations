@@ -153,3 +153,87 @@ func TestPgxCanceledTransactionalApplyStaysPureCancellation(t *testing.T) {
 		t.Fatalf("interrupted transaction left schema effects: %v", err)
 	}
 }
+
+// Cancelling an in-flight no-transaction statement must leave the dirty row
+// for operator recovery, keep the context classification, end the
+// interrupted server session instead of pooling it, and free the lock.
+func TestPgxCanceledNoTransactionStatementStaysDirtyAndDiscardsSession(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		name := "apply"
+		if down {
+			name = "rollback"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			db, _ := isolatedMigrationDatabase(t, ctx)
+			backend, err := postgres.New(db, postgres.WithLockTimeout(5*time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			upSQL, downSQL := "SELECT pg_sleep(10);", ""
+			if down {
+				upSQL, downSQL = "CREATE TABLE public.direct_cancel(id int);", "SELECT pg_sleep(10);"
+			}
+			migration, err := migrations.NewMigration(1, "direct_cancel", migrations.TransactionModeNone, upSQL, downSQL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := backend.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := session.Prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if down {
+				if _, err := session.Apply(ctx, migration); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var pid int32
+			if err := db.QueryRow(ctx, "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())").Scan(&pid); err != nil {
+				t.Fatalf("lock owner: %v", err)
+			}
+			short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+			if down {
+				_, err = session.Rollback(short, migration)
+			} else {
+				_, err = session.Apply(short, migration)
+			}
+			stop()
+			if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) {
+				t.Fatalf("interrupted statement error = %v, want redacted execution deadline", err)
+			}
+			_ = session.Release(context.Background())
+
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				var alive bool
+				if err := db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)", pid).Scan(&alive); err != nil {
+					t.Fatal(err)
+				}
+				if !alive {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("interrupted session %d was not discarded", pid)
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			next, err := backend.Acquire(ctx)
+			if err != nil {
+				t.Fatalf("lock was not freed: %v", err)
+			}
+			defer func() {
+				if err := next.Release(context.Background()); err != nil {
+					t.Error(err)
+				}
+			}()
+			records, err := next.Records(ctx)
+			if err != nil || len(records) != 1 || !records[0].Dirty() || records[0].Checksum() != migration.Checksum() {
+				t.Fatalf("interrupted statement history = %v, %v; want one dirty row", records, err)
+			}
+		})
+	}
+}
