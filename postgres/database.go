@@ -38,6 +38,10 @@ type connection interface {
 	release()
 	// discard closes the physical session so the pool never reuses it.
 	discard(context.Context) error
+	// closed reports that the driver already closed the physical session, for
+	// example after caller cancellation interrupted a statement. PostgreSQL
+	// then ends the server session, dropping its advisory locks and settings.
+	closed() bool
 }
 
 // connectionPool is the backend's narrow view of *pgxpool.Pool. It exists so
@@ -79,6 +83,8 @@ func (leased pgxConnection) begin(ctx context.Context, options pgx.TxOptions) (t
 }
 
 func (leased pgxConnection) release() { leased.Release() }
+
+func (leased pgxConnection) closed() bool { return leased.Conn.Conn().IsClosed() }
 
 // Hijack removes the session from the pool before Close sends Terminate, so a
 // session with uncertain lock or setting state cannot reach another borrower.

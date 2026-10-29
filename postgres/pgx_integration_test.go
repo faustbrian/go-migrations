@@ -10,6 +10,9 @@ import (
 
 	migrations "github.com/faustbrian/go-migrations/v5"
 	"github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPgxDiscardRemovesSessionFromPool(t *testing.T) {
@@ -133,7 +136,9 @@ func TestPgxCanceledTransactionalApplyStaysPureCancellation(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
 		t.Fatalf("Apply() error = %v, want redacted execution deadline without cleanup failure", err)
 	}
-	_ = session.Release(context.Background())
+	if err := session.Release(context.Background()); err != nil {
+		t.Fatalf("Release() after cancellation error = %v, want nil", err)
+	}
 
 	next, err := backend.Acquire(ctx)
 	if err != nil {
@@ -202,10 +207,12 @@ func TestPgxCanceledNoTransactionStatementStaysDirtyAndDiscardsSession(t *testin
 				_, err = session.Apply(short, migration)
 			}
 			stop()
-			if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) {
-				t.Fatalf("interrupted statement error = %v, want redacted execution deadline", err)
+			if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
+				t.Fatalf("interrupted statement error = %v, want pure redacted execution deadline", err)
 			}
-			_ = session.Release(context.Background())
+			if err := session.Release(context.Background()); err != nil {
+				t.Fatalf("Release() after cancellation error = %v, want nil", err)
+			}
 
 			deadline := time.Now().Add(10 * time.Second)
 			for {
@@ -235,5 +242,115 @@ func TestPgxCanceledNoTransactionStatementStaysDirtyAndDiscardsSession(t *testin
 				t.Fatalf("interrupted statement history = %v, %v; want one dirty row", records, err)
 			}
 		})
+	}
+}
+
+// Cancelling transactional down SQL must roll back the delete and leave the
+// clean row, report only the redacted deadline and release cleanly.
+func TestPgxCanceledTransactionalRollbackKeepsCleanHistory(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	db, _ := isolatedMigrationDatabase(t, ctx)
+	backend, err := postgres.New(db, postgres.WithLockTimeout(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrations.NewMigration(1, "slow_down", migrations.TransactionModeDefault,
+		"CREATE TABLE public.slow_down(id int);", "DROP TABLE public.slow_down;\nSELECT pg_sleep(10);\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Apply(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err = session.Rollback(short, migration)
+	stop()
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
+		t.Fatalf("Rollback() error = %v, want pure redacted execution deadline", err)
+	}
+	if err := session.Release(context.Background()); err != nil {
+		t.Fatalf("Release() after cancellation error = %v, want nil", err)
+	}
+	next, err := backend.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("lock was not freed: %v", err)
+	}
+	defer func() {
+		if err := next.Release(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	records, err := next.Records(ctx)
+	if err != nil || len(records) != 1 || records[0].Dirty() {
+		t.Fatalf("interrupted rollback history = %v, %v; want one clean row", records, err)
+	}
+	var present bool
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.slow_down') IS NOT NULL").Scan(&present); err != nil || !present {
+		t.Fatalf("interrupted rollback dropped the table: %v", err)
+	}
+}
+
+// With PostgreSQL's cancel-request handler the session survives cancellation:
+// cleanup must still restore statement_timeout, unlock and return the session
+// to the pool rather than discard it.
+func TestPgxCancelRequestKeepsSessionAndRestoresIt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	fixture, _ := isolatedMigrationDatabase(t, ctx)
+	config := fixture.Config()
+	config.MaxConns = 1
+	config.ConnConfig.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+		return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: 5 * time.Second}
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	backend, err := postgres.New(pool, postgres.WithLockTimeout(5*time.Second), postgres.WithStatementTimeout(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrations.NewMigration(1, "cancel_request", migrations.TransactionModeNone, "SELECT pg_sleep(10);", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var pid int32
+	if err := fixture.QueryRow(ctx, "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())").Scan(&pid); err != nil {
+		t.Fatalf("lock owner: %v", err)
+	}
+	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err = session.Apply(short, migration)
+	stop()
+	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
+		t.Fatalf("Apply() error = %v, want redacted execution failure without cleanup failure", err)
+	}
+	if err := session.Release(context.Background()); err != nil {
+		t.Fatalf("Release() after cancel request error = %v, want nil", err)
+	}
+	var reusedPID int32
+	var timeout string
+	var locks int
+	err = pool.QueryRow(ctx, "SELECT pg_backend_pid(), current_setting('statement_timeout'), (SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid())").Scan(&reusedPID, &timeout, &locks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reusedPID != pid || timeout != "0" || locks != 0 {
+		t.Fatalf("surviving session pid=%d (owner %d) statement_timeout=%s advisory locks=%d; want reused, restored and unlocked", reusedPID, pid, timeout, locks)
 	}
 }

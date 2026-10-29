@@ -821,6 +821,11 @@ func (session *session) resetSessionStatementTimeout(ctx context.Context) error 
 	if session.statementTimeout == 0 {
 		return nil
 	}
+	if session.connection.closed() {
+		// The server session already ended with its setting; nothing to restore.
+		session.tainted = true
+		return nil
+	}
 	resetCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
 		statementTimeoutResetLimit,
@@ -993,6 +998,14 @@ func (session *session) Release(ctx context.Context) error {
 	defer finish()
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
+	}
+	if session.connection.closed() {
+		// The ended server session already released its advisory lock, so an
+		// unlock failure here would only report the earlier interruption again.
+		_ = discardConnection(operationCtx, session.connection)
+		session.released = true
+		session.connection = nil
+		return nil
 	}
 
 	var unlocked bool

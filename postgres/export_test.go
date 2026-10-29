@@ -29,6 +29,8 @@ type MockPool struct {
 	OnQuery func(string)
 	// Released and Discarded count how leased sessions ended.
 	Released, Discarded int
+	// ConnClosed reports the scripted session as already closed by the driver.
+	ConnClosed bool
 }
 
 // NewMockBackend constructs a backend over pool with production defaults.
@@ -72,6 +74,8 @@ func (connection *mockConnection) Query(ctx context.Context, query string, args 
 }
 
 func (connection *mockConnection) release() { connection.pool.Released++ }
+
+func (connection *mockConnection) closed() bool { return connection.pool.ConnClosed }
 
 func (connection *mockConnection) discard(ctx context.Context) error {
 	connection.pool.Discarded++

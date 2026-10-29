@@ -108,6 +108,11 @@ session plus any concurrent `Inspect`, `InspectObjects` or `ReadLedger` call;
 lock, rollback or statement-timeout state is uncertain is closed and removed
 from the pool instead of being returned. Rollback and that close now run on a
 detached 30-second deadline instead of a context-free `database/sql` call.
+When caller cancellation interrupts a statement, pgx closes the connection and
+PostgreSQL ends the session with its transaction, `statement_timeout` and
+advisory lock. Cleanup and `Release` then discard that session without adding
+a cleanup or lock-release failure, so a cancelled `Runner` operation reports
+only the cancellation.
 
 Migration SQL still runs without arguments, so pgx sends it with PostgreSQL's
 simple query protocol and a multi-statement file executes as one request,

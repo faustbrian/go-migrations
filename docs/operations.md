@@ -48,9 +48,11 @@ Advisory-lock acquisition retains a query failure alongside concurrent caller
 cancellation. Transactional apply/down errors also retain meaningful explicit
 rollback failures; still call `Release` so an uncertain physical session is
 discarded. Already-completed transactions add no cleanup failure, and neither
-does a transaction whose connection pgx already closed after caller
-cancellation interrupted a statement: PostgreSQL aborts it when the session
-ends, so it cannot commit.
+does a session that pgx already closed after caller cancellation interrupted
+a statement: PostgreSQL ends that session, aborting its transaction and
+dropping its `statement_timeout` and advisory lock, so rollback, timeout
+restoration and `Release` discard it without reporting a cleanup failure.
+Unlock and restoration failures on a live connection are still reported.
 
 pgx accepts a context for commit, rollback and connection close. Rollback and
 the close that discards an uncertain session run on a detached 30-second

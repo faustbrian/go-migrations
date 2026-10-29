@@ -21,10 +21,15 @@ These changes form the v5.0.0 major.
   and `driver.ErrBadConn` no longer appear in error chains.
 - Run transaction rollback and the close that discards an uncertain session
   on a detached 30-second deadline instead of context-free `database/sql`
-  calls. A transaction whose connection pgx already closed after caller
-  cancellation no longer adds a rollback failure to a pure cancellation, and
-  a failed baseline rollback now discards the session instead of returning it
-  to the pool.
+  calls. A failed baseline rollback now discards the session instead of
+  returning it to the pool.
+- Keep a cancelled operation a pure cancellation through `Runner` results
+  and service exit codes. When caller cancellation interrupts a statement,
+  pgx closes the connection and PostgreSQL ends the session, dropping its
+  transaction, `statement_timeout` and advisory lock. Rollback, timeout
+  restoration and `Release` then discard that closed session without
+  reporting a cleanup or lock-release failure. Unlock and restoration
+  failures on a live connection are still reported.
 - Return `migrations.ErrInvalidVersion` for a zero `Migration` passed to
   `Apply` or `Rollback` instead of an internal adapter error.
 - Move the module to `github.com/faustbrian/go-migrations/v5`. The ledger,

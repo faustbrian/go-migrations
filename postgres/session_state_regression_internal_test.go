@@ -40,11 +40,11 @@ func TestReleaseDiscardsUncertainLockConnection(t *testing.T) {
 			}
 			next := connector.nextBorrower(t)
 			reused, locked := next == original, next.locked
-			if failed && (reused || !original.closed || locked) {
-				t.Fatalf("uncertain session reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
+			if failed && (reused || !original.physicallyClosed || locked) {
+				t.Fatalf("uncertain session reused=%t physically closed=%t next borrower locked=%t", reused, original.physicallyClosed, locked)
 			}
-			if !failed && (!reused || original.closed || locked) {
-				t.Fatalf("healthy session reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
+			if !failed && (!reused || original.physicallyClosed || locked) {
+				t.Fatalf("healthy session reused=%t physically closed=%t next borrower locked=%t", reused, original.physicallyClosed, locked)
 			}
 		})
 	}
@@ -81,11 +81,11 @@ func TestAcquireDiscardsUncertainLockAndReusesDefiniteContention(t *testing.T) {
 			original := connector.connections[0]
 			next := connector.nextBorrower(t)
 			reused, locked := next == original, next.locked
-			if uncertain && (reused || !original.closed || locked) {
-				t.Fatalf("uncertain acquisition reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
+			if uncertain && (reused || !original.physicallyClosed || locked) {
+				t.Fatalf("uncertain acquisition reused=%t physically closed=%t next borrower locked=%t", reused, original.physicallyClosed, locked)
 			}
-			if !uncertain && (!reused || original.closed || locked) {
-				t.Fatalf("definite contention reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
+			if !uncertain && (!reused || original.physicallyClosed || locked) {
+				t.Fatalf("definite contention reused=%t physically closed=%t next borrower locked=%t", reused, original.physicallyClosed, locked)
 			}
 		})
 	}
@@ -144,8 +144,8 @@ func TestFailedStatementTimeoutPolicyDiscardsPhysicalSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			next := connector.nextBorrower(t)
-			if next == original || !original.closed || next.timeoutChanged || next.locked {
-				t.Fatalf("policy failure reused=%t closed=%t next timeout changed=%t next locked=%t", next == original, original.closed, next.timeoutChanged, next.locked)
+			if next == original || !original.physicallyClosed || next.timeoutChanged || next.locked {
+				t.Fatalf("policy failure reused=%t closed=%t next timeout changed=%t next locked=%t", next == original, original.physicallyClosed, next.timeoutChanged, next.locked)
 			}
 		})
 	}
@@ -235,7 +235,7 @@ type stateConnection struct {
 	contendedCancel    context.CancelFunc
 	duration           int64
 	locked             bool
-	closed             bool
+	physicallyClosed   bool
 	dirty              bool
 	downExecuted       bool
 }
@@ -245,13 +245,15 @@ func (*stateConnection) begin(context.Context, pgx.TxOptions) (transaction, erro
 }
 
 func (connection *stateConnection) release() {
-	if !connection.closed {
+	if !connection.physicallyClosed {
 		connection.pool.idle = append(connection.pool.idle, connection)
 	}
 }
 
+func (connection *stateConnection) closed() bool { return connection.physicallyClosed }
+
 func (connection *stateConnection) discard(context.Context) error {
-	connection.closed = true
+	connection.physicallyClosed = true
 	connection.locked = false
 	return nil
 }

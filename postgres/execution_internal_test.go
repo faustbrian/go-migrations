@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	migrations "github.com/faustbrian/go-migrations/v5"
 	"github.com/jackc/pgx/v5"
@@ -162,4 +163,35 @@ func onlyContextCauses(err error) bool {
 		return onlyContextCauses(cause)
 	}
 	return err == context.Canceled || err == context.DeadlineExceeded
+}
+
+// When cancellation made pgx close the session, the server already dropped its
+// statement_timeout and advisory lock. Cleanup must discard it quietly instead
+// of reporting the interruption again as reset or unlock failures.
+func TestClosedSessionCleanupAddsNoDatabaseFailure(t *testing.T) {
+	t.Parallel()
+
+	session, mock := faultSession(t, time.Second)
+	pool := session.connection.(*mockConnection).pool
+	pool.ConnClosed = true
+	migration := faultMigration(t, migrations.TransactionModeNone)
+	mock.ExpectExec("set_config").WillReturnResult(MockResult("SELECT", 1))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(MockResult("INSERT", 1))
+	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(fmt.Errorf("private interrupted statement: %w", context.DeadlineExceeded))
+	mock.ExpectClose()
+
+	_, err := session.Apply(context.Background(), migration)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, ErrDatabaseOperationFailed) {
+		t.Fatalf("Apply() error = %v, want pure redacted deadline", err)
+	}
+	if err := session.Release(context.Background()); err != nil {
+		t.Fatalf("Release(closed session) error = %v, want nil", err)
+	}
+	if pool.Discarded != 1 || pool.Released != 0 {
+		t.Fatalf("closed session discarded=%d released=%d, want one discard", pool.Discarded, pool.Released)
+	}
+	if err := session.Release(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("second Release() error = %v, want ErrSessionReleased", err)
+	}
+	assertFaultExpectations(t, mock)
 }
