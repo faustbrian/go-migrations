@@ -46,8 +46,9 @@ DROP INDEX CONCURRENTLY widgets_name_idx;
 
 `NoTransaction` must appear once, before `Up`. A failure leaves the ledger row
 dirty because SQL may have partially completed. Keep each no-transaction
-direction to one PostgreSQL command. Drivers may send a multi-command string as
-one implicit transaction, which defeats commands such as `CREATE INDEX
+direction to one PostgreSQL command. Migration SQL is sent without arguments
+over PostgreSQL's simple query protocol, which runs a multi-command string as
+one implicit transaction and defeats commands such as `CREATE INDEX
 CONCURRENTLY`; use several ordered migration files instead.
 
 ## Identity and immutability

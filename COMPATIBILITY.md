@@ -2,12 +2,13 @@
 
 This repository follows semantic versioning. Root releases use `v<version>`
 tags, such as the published `v1.1.0`; package directories are not independently
-versioned modules and do not use directory-prefixed tags. The v4 module uses
-the `/v4` module suffix without a version-specific source directory.
+versioned modules and do not use directory-prefixed tags. The v5 module uses
+the `/v5` module suffix without a version-specific source directory.
 
 Published releases keep their original module paths. This source contains the
-v4 line; v4 removed the superseded service adapter surfaces and keeps the v3
-ledger, checksum and advisory-lock contracts.
+v5 line; v5 drives the PostgreSQL backend with a caller-owned pgx pool instead
+of `database/sql` and keeps the v3 and v4 ledger, checksum and advisory-lock
+contracts.
 Patch releases MUST remain backward
 compatible, and incompatible exported API or documented behavior changes
 require a new major version. The latest patch in each supported major is the

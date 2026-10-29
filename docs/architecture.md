@@ -6,8 +6,9 @@ Applications import the root package and an engine backend. The root package
 loads immutable migrations, validates history, builds deterministic plans, and
 coordinates execution. `postgres.Backend` owns PostgreSQL advisory locking,
 schema inspection, ledger persistence, transactions, and statement timeouts.
-The internal Goose adapter receives already-validated immutable migrations and
-executes SQL on the caller-owned transaction or connection.
+The backend executes already-validated immutable migration SQL with pgx on the
+session's own transaction, or for explicit no-transaction migrations on the
+leased advisory-lock connection, never on another pool connection.
 
 All operations follow this order:
 
@@ -34,9 +35,10 @@ sensitive data even though there is no SQL field; do not log unwrapped driver
 causes. Source loading precedes locking, so this is not an atomic
 filesystem/database snapshot.
 
-`database/sql` integration avoids a dependency on a specific pool wrapper.
-Applications using `postgres` should expose its underlying `*sql.DB` to the
-PostgreSQL backend. Neither package needs to import the other, avoiding a cycle.
+The PostgreSQL backend takes a `*pgxpool.Pool`, the shared pgx type rather
+than a specific wrapper. Applications using `postgres` should expose its
+underlying pool to the backend. Neither package needs to import the other,
+avoiding a cycle.
 `sqlc` remains service-local build tooling and is not runtime migration state.
 
 ## Service command boundary

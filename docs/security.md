@@ -3,7 +3,7 @@
 [Documentation index](README.md) · [Repository entry](../README.md)
 
 The repository-specific, versioned [threat model](threat-model.md) inventories
-assets, trust boundaries, controls, accepted risks, and v4 release
+assets, trust boundaries, controls, accepted risks, and v5 release
 requirements. This page provides the corresponding operator guidance.
 
 Migration files are trusted deployment artifacts with database-owner power.
