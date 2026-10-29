@@ -69,8 +69,9 @@ golib mutation --module . --package postgres
 Run adjacent Make commands in one disposable-cache session as shown above.
 `make check` and `make ci` run the bounded contract with the declared PostgreSQL
 fixture and `integration` tag; they are not Docker- or database-free. Both also
-retain the unchanged cheap engine-boundary script, which rejects public Goose
-identity, imports outside the internal engine and Goose ledger ownership.
+retain the cheap engine-boundary script, which rejects `database/sql`, its
+driver adapters, other database drivers and the retired Goose engine in Go
+imports, `go.mod`, the public API snapshot and the owned ledger.
 CI requires that guard and shared CI to succeed. CI also validates repository/
 cohesion structure. Specification checking is offline unless requested online.
 One targeted `postgres` test operation runs once with a two-minute timeout:

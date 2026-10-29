@@ -2,16 +2,14 @@ package postgres_test
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestAcquirePreservesQueryFailureDuringCancellation(t *testing.T) {
@@ -33,20 +31,21 @@ func TestAcquirePreservesQueryFailureDuringCancellation(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			connection := &lockFailureConnection{cause: test.cause, interrupt: func() {
+			database, mock := newMockDatabase(t)
+			database.OnQuery = func(string) {
 				if test.cancel {
 					cancel()
 				}
-			}}
-			database := sql.OpenDB(lockFailureConnector{connection})
-			t.Cleanup(func() { _ = database.Close() })
-			backend, err := postgres.New(database)
+			}
+			mock.ExpectQuery("pg_try_advisory_lock").WillReturnError(test.cause)
+			mock.ExpectClose()
+			backend, err := postgres.NewMockBackend(database)
 			if err != nil {
 				t.Fatal(err)
 			}
 			session, err := backend.Acquire(ctx)
-			if session != nil || !errors.Is(err, test.cause) || !connection.closed {
-				t.Fatalf("acquisition lost failure or retained physical ownership: %v, closed=%t", err, connection.closed)
+			if session != nil || !errors.Is(err, test.cause) || database.Discarded != 1 || database.Released != 0 {
+				t.Fatalf("acquisition lost failure or retained physical ownership: %v, discarded=%d released=%d", err, database.Discarded, database.Released)
 			}
 			if test.cancel && !errors.Is(err, context.Canceled) {
 				t.Fatal("caller cancellation was lost")
@@ -62,7 +61,7 @@ func TestTransactionalOperationsPreserveExplicitRollbackFailure(t *testing.T) {
 	cleanupFailure := errors.New("private rollback failure")
 	for _, down := range []bool{false, true} {
 		for _, statement := range []bool{false, true} {
-			for _, cleanup := range []error{nil, sql.ErrTxDone, cleanupFailure} {
+			for _, cleanup := range []error{nil, pgx.ErrTxClosed, cleanupFailure} {
 				t.Run(fmt.Sprintf("down=%t/statement=%t/cleanup=%v", down, statement, cleanup), func(t *testing.T) {
 					t.Parallel()
 					database, mock := newMockDatabase(t)
@@ -70,9 +69,9 @@ func TestTransactionalOperationsPreserveExplicitRollbackFailure(t *testing.T) {
 					migration := newMigration(t, migrations.TransactionModeDefault)
 					mock.ExpectBegin()
 					if statement {
-						mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 1))
+						mock.ExpectExec("set_config").WillReturnResult(postgres.MockResult("SELECT", 1))
 						if !down {
-							mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+							mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 						}
 						query := "CREATE TABLE users"
 						if down {
@@ -96,16 +95,19 @@ func TestTransactionalOperationsPreserveExplicitRollbackFailure(t *testing.T) {
 					if statement {
 						original = migrations.ErrExecutionFailed
 					}
-					if !errors.Is(err, original) || errors.Is(err, sql.ErrTxDone) || errors.Is(err, cleanupFailure) != (cleanup == cleanupFailure) {
+					if !errors.Is(err, original) || errors.Is(err, pgx.ErrTxClosed) || errors.Is(err, cleanupFailure) != (cleanup == cleanupFailure) {
 						t.Fatalf("operation/cleanup causes were not preserved: %v", err)
 					}
 					assertPrivateFailureRedacted(t, err)
-					mock.ExpectQuery("pg_advisory_unlock").WillReturnRows(sqlmock.NewRows([]string{"unlocked"}).AddRow(true))
+					mock.ExpectQuery("pg_advisory_unlock").WillReturnRows(postgres.NewMockRows([]string{"unlocked"}).AddRow(true))
 					if cleanup == cleanupFailure {
 						mock.ExpectClose()
 					}
 					if err := session.Release(context.Background()); err != nil {
 						t.Fatal(err)
+					}
+					if discarded := database.Discarded == 1; discarded != (cleanup == cleanupFailure) || database.Released+database.Discarded != 1 {
+						t.Fatalf("uncertain rollback discarded=%d released=%d", database.Discarded, database.Released)
 					}
 					assertExpectations(t, mock)
 				})
@@ -121,33 +123,4 @@ func assertPrivateFailureRedacted(t *testing.T, err error) {
 			t.Fatalf("format %s disclosed a driver diagnostic", format)
 		}
 	}
-}
-
-type lockFailureConnector struct{ connection *lockFailureConnection }
-
-func (c lockFailureConnector) Connect(context.Context) (driver.Conn, error) { return c.connection, nil }
-func (lockFailureConnector) Driver() driver.Driver                          { return lockFailureDriver{} }
-
-type lockFailureDriver struct{}
-
-func (lockFailureDriver) Open(string) (driver.Conn, error) {
-	return nil, errors.New("connector required")
-}
-
-type lockFailureConnection struct {
-	cause     error
-	interrupt func()
-	closed    bool
-}
-
-func (*lockFailureConnection) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("unexpected prepare")
-}
-func (c *lockFailureConnection) Close() error { c.closed = true; return nil }
-func (*lockFailureConnection) Begin() (driver.Tx, error) {
-	return nil, errors.New("unexpected transaction")
-}
-func (c *lockFailureConnection) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	c.interrupt()
-	return nil, c.cause
 }

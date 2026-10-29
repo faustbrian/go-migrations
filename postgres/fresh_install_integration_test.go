@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 // MIG-02: database DDL and cluster-level role reservations are both
@@ -32,14 +32,14 @@ func TestInstallFreshAtomicPostgreSQL(t *testing.T) {
 	}
 	// Derive a safe cluster-unique role from the per-test random database name.
 	var databaseName string
-	if err := db.QueryRowContext(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
+	if err := db.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
 		t.Fatal("cannot identify isolated fixture")
 	}
 	role := databaseName + "_reserved"
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
-		if _, err := db.ExecContext(cleanup, `DROP ROLE IF EXISTS "`+role+`"`); err != nil {
+		if _, err := db.Exec(cleanup, `DROP ROLE IF EXISTS "`+role+`"`); err != nil {
 			t.Error("role cleanup failed")
 		}
 	})
@@ -51,7 +51,7 @@ func TestInstallFreshAtomicPostgreSQL(t *testing.T) {
 	var ledger, table, reserved bool
 	inspect := func() {
 		t.Helper()
-		if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.migrations') IS NOT NULL, to_regclass('public.fresh_first') IS NOT NULL, EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)", role).Scan(&ledger, &table, &reserved); err != nil {
+		if err := db.QueryRow(ctx, "SELECT to_regclass('public.migrations') IS NOT NULL, to_regclass('public.fresh_first') IS NOT NULL, EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)", role).Scan(&ledger, &table, &reserved); err != nil {
 			t.Fatal("cannot inspect install effects")
 		}
 	}
@@ -91,7 +91,7 @@ func TestInstallFreshAtomicPostgreSQL(t *testing.T) {
 	if !errors.Is(err, postgres.ErrLedgerConflict) || len(result) != 0 {
 		t.Fatal("existing installation was replayed", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
+	if err := db.Ping(ctx); err != nil {
 		t.Fatal("installer closed borrowed database")
 	}
 }

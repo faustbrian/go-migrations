@@ -1,14 +1,15 @@
 // Package postgres implements the public.migrations ledger and connection-bound
 // advisory-lock backend for migrations.Runner. New borrows a caller-owned
-// *sql.DB; it does not open, close or migrate the database at construction.
-// Acquire owns one leased connection until Release. Cooperating jobs in the
-// same database share a stable lock; unrelated schema writers are not excluded.
+// *pgxpool.Pool; it does not open, close or migrate the database at
+// construction. Acquire owns one leased connection until Release. Cooperating
+// jobs in the same database share a stable lock; unrelated schema writers are
+// not excluded.
 //
 // Transactional SQL and ledger changes use one transaction per migration.
 // Nontransactional execution persists dirty state first; unresolved dirty
 // outcomes require explicit operator review/recovery. An error during commit or timeout cleanup
 // can follow durable changes; inspect state before retrying. Finite contexts
-// bound cooperative work, not context-free database/sql finalizers.
+// bound work; rollback and connection close use detached finite deadlines.
 //
 // Default PostgreSQL operation formatting hides driver diagnostics, but error
 // traversal may expose the original cause. Schema inspection returns sensitive
@@ -18,16 +19,16 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	gooseadapter "github.com/faustbrian/go-migrations/v4/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -40,11 +41,14 @@ const (
 	MaxLedgerBytes = 16 << 20
 	// Literal nanoseconds keep these safety budgets indivisible while retaining
 	// their exact documented durations.
-	defaultLockRetryInterval    time.Duration = 100_000_000
-	defaultLockTimeout          time.Duration = 30_000_000_000
-	defaultStatementTimeout     time.Duration = 300_000_000_000
-	defaultOperationTimeout     time.Duration = 600_000_000_000
-	statementTimeoutResetLimit  time.Duration = 30_000_000_000
+	defaultLockRetryInterval   time.Duration = 100_000_000
+	defaultLockTimeout         time.Duration = 30_000_000_000
+	defaultStatementTimeout    time.Duration = 300_000_000_000
+	defaultOperationTimeout    time.Duration = 600_000_000_000
+	statementTimeoutResetLimit time.Duration = 30_000_000_000
+	// finalizationTimeout bounds rollback and physical close after the
+	// operation context ended; cleanup must still run but never hang forever.
+	finalizationTimeout         time.Duration = 30_000_000_000
 	maximumDurationMilliseconds               = math.MaxInt64 / int64(time.Millisecond)
 )
 
@@ -194,7 +198,7 @@ func WithOperationTimeout(timeout time.Duration) Option {
 
 // Backend owns PostgreSQL preparation and creates connection-bound sessions.
 type Backend struct {
-	database          *sql.DB
+	pool              connectionPool
 	namespace         string
 	lockRetryInterval time.Duration
 	lockTimeout       time.Duration
@@ -202,18 +206,24 @@ type Backend struct {
 	operationTimeout  time.Duration
 }
 
-// New constructs the backend without invoking database itself or taking its
+// New constructs the backend without using pool itself or taking its
 // ownership. Caller options run left-to-right until a nil/failing option; repeated
 // settings use the last value. Defaults are 30-second acquisition, five-minute
-// statement and ten-minute primary-operation timeouts. The caller closes the
-// database after all sessions finish and must not mutate options during use.
-func New(database *sql.DB, options ...Option) (*Backend, error) {
-	if database == nil {
+// statement and ten-minute primary-operation timeouts. Each session leases one
+// pool connection for its lifetime, so size the pool for concurrent sessions
+// plus inspection and discovery. The caller closes the pool after all sessions
+// finish and must not mutate options during use.
+func New(pool *pgxpool.Pool, options ...Option) (*Backend, error) {
+	if pool == nil {
 		return nil, ErrInvalidConfig
 	}
 
+	return newBackend(pgxPool{pool}, options...)
+}
+
+func newBackend(pool connectionPool, options ...Option) (*Backend, error) {
 	backend := &Backend{
-		database:          database,
+		pool:              pool,
 		lockRetryInterval: defaultLockRetryInterval,
 		lockTimeout:       defaultLockTimeout,
 		statementTimeout:  defaultStatementTimeout,
@@ -242,7 +252,7 @@ func (session *session) Prepare(ctx context.Context) error {
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
 	}
-	if _, err := session.connection.ExecContext(operationCtx, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
+	if _, err := session.connection.Exec(operationCtx, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
 		return databaseContextFailure(operationCtx, "create migration ledger", err)
 	}
 
@@ -255,26 +265,26 @@ func (session *session) Prepare(ctx context.Context) error {
 // retried; uncertain lock-query failures discard the physical connection.
 // A successful caller must Release the session even after operation failure.
 func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error) {
-	if backend == nil || backend.database == nil {
+	if backend == nil || backend.pool == nil {
 		return nil, ErrInvalidConfig
 	}
 
 	acquireCtx, cancel := context.WithTimeout(ctx, backend.lockTimeout)
 	defer cancel()
 
-	connection, err := backend.database.Conn(acquireCtx)
+	connection, err := backend.pool.acquire(acquireCtx)
 	if err != nil {
 		return nil, databaseContextFailure(acquireCtx, "acquire dedicated PostgreSQL connection", err)
 	}
 
 	for {
 		var acquired bool
-		if err := connection.QueryRowContext(
+		if err := connection.QueryRow(
 			acquireCtx,
 			"SELECT pg_try_advisory_lock($1)",
 			advisoryLockKey,
 		).Scan(&acquired); err != nil {
-			_ = discardConnection(connection)
+			_ = discardConnection(acquireCtx, connection)
 			return nil, databaseContextFailure(acquireCtx, "try PostgreSQL advisory lock", err)
 		}
 		if acquired {
@@ -291,7 +301,7 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 		select {
 		case <-acquireCtx.Done():
 			timer.Stop()
-			_ = connection.Close()
+			connection.release()
 
 			return nil, acquireCtx.Err()
 		case <-timer.C:
@@ -300,7 +310,7 @@ func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
 }
 
 type session struct {
-	connection       *sql.Conn
+	connection       connection
 	namespace        string
 	statementTimeout time.Duration
 	operationTimeout time.Duration
@@ -363,15 +373,16 @@ func (session *session) Records(ctx context.Context) ([]migrations.Record, error
 		return nil, ErrSessionReleased
 	}
 
-	rows, err := session.connection.QueryContext(operationCtx, ledgerSQL(ledgerRecordsSQL, session.namespace))
+	rows, err := session.connection.Query(operationCtx, ledgerSQL(ledgerRecordsSQL, session.namespace))
 	if err != nil {
 		return nil, databaseContextFailure(operationCtx, "query migration ledger", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 	return decodeLedgerRows(operationCtx, rows)
 }
 
-func decodeLedgerRows(operationCtx context.Context, rows *sql.Rows) ([]migrations.Record, error) {
+// The caller closes rows; decoding stops at the first invalid or excess row.
+func decodeLedgerRows(operationCtx context.Context, rows pgx.Rows) ([]migrations.Record, error) {
 	records := make([]migrations.Record, 0, min(MaxLedgerRecords, 128))
 	totalBytes := 0
 	for rows.Next() {
@@ -384,7 +395,7 @@ func decodeLedgerRows(operationCtx context.Context, rows *sql.Rows) ([]migration
 			name       string
 			encoded    string
 			startedAt  time.Time
-			finishedAt sql.NullTime
+			finishedAt pgtype.Timestamptz
 			durationMS int64
 			dirty      bool
 		)
@@ -409,7 +420,7 @@ func decodeLedgerRows(operationCtx context.Context, rows *sql.Rows) ([]migration
 			return nil, err
 		}
 		totalBytes = nextBytes
-		if dirty == finishedAt.Valid {
+		if dirty == finishedAt.Valid || finishedAt.InfinityModifier != pgtype.Finite {
 			return nil, migrations.ErrInvalidRecord
 		}
 		appliedAt := startedAt
@@ -463,17 +474,16 @@ func (session *session) Apply(ctx context.Context, migration migrations.Migratio
 		return migrations.Record{}, ErrSessionReleased
 	}
 
-	adapter, err := gooseadapter.Compile(migration)
-	if err != nil {
+	if err := validMigration(migration); err != nil {
 		return migrations.Record{}, err
 	}
 
 	startedAt := time.Now().UTC()
 	if migration.TransactionMode() == migrations.TransactionModeDefault {
-		return session.applyTransaction(operationCtx, adapter, migration, startedAt)
+		return session.applyTransaction(operationCtx, migration, startedAt)
 	}
 
-	return session.applyWithoutTransaction(operationCtx, adapter, migration, startedAt)
+	return session.applyWithoutTransaction(operationCtx, migration, startedAt)
 }
 
 // Rollback removes one clean row after down SQL under its transaction policy.
@@ -488,18 +498,17 @@ func (session *session) Rollback(ctx context.Context, migration migrations.Migra
 	if session.released || session.connection == nil {
 		return migrations.Record{}, ErrSessionReleased
 	}
-	adapter, err := gooseadapter.Compile(migration)
-	if err != nil {
+	if err := validMigration(migration); err != nil {
 		return migrations.Record{}, err
 	}
 	if migration.DownSQL() == "" {
 		return migrations.Record{}, migrations.ErrIrreversible
 	}
 	if migration.TransactionMode() == migrations.TransactionModeDefault {
-		return session.rollbackTransaction(operationCtx, adapter, migration)
+		return session.rollbackTransaction(operationCtx, migration)
 	}
 
-	return session.rollbackWithoutTransaction(operationCtx, adapter, migration)
+	return session.rollbackWithoutTransaction(operationCtx, migration)
 }
 
 // Recover persists an explicit operator-reviewed dirty outcome atomically.
@@ -523,7 +532,7 @@ func (session *session) Recover(
 	case migrations.RecoveryMarkApplied:
 		finishedAt := time.Now().UTC()
 		var durationMS int64
-		err := session.connection.QueryRowContext(
+		err := session.connection.QueryRow(
 			operationCtx,
 			ledgerSQL(`UPDATE public.migrations SET finished_at = $1, execution_time_ms = GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)::bigint), dirty = false WHERE version = $2 AND checksum = $3 AND dirty = true AND GREATEST(0, floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4 RETURNING execution_time_ms`, session.namespace),
 			finishedAt,
@@ -531,7 +540,7 @@ func (session *session) Recover(
 			migration.Checksum().String(),
 			maximumDurationMilliseconds,
 		).Scan(&durationMS)
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return migrations.Record{}, migrations.ErrNoDirtyMigration
 		}
 		if err != nil {
@@ -554,14 +563,14 @@ func (session *session) Recover(
 	case migrations.RecoveryMarkRolledBack:
 		var startedAt time.Time
 		var durationMS int64
-		err := session.connection.QueryRowContext(
+		err := session.connection.QueryRow(
 			operationCtx,
 			ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`, session.namespace),
 			migrationLedgerVersion(migration),
 			migration.Checksum().String(),
 			maximumDurationMilliseconds,
 		).Scan(&startedAt, &durationMS)
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return migrations.Record{}, migrations.ErrNoDirtyMigration
 		}
 		if err != nil {
@@ -589,26 +598,25 @@ func (session *session) Recover(
 
 func (session *session) rollbackTransaction(
 	ctx context.Context,
-	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
 ) (record migrations.Record, err error) {
-	transaction, err := session.connection.BeginTx(ctx, nil)
+	transaction, err := session.connection.begin(ctx, pgx.TxOptions{})
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "begin rollback transaction", err)
 	}
-	defer session.rollbackTransactionCleanup(transaction, &err)
+	defer session.rollbackTransactionCleanup(ctx, transaction, &err)
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
 		return migrations.Record{}, err
 	}
 
-	if err := adapter.RollbackTx(ctx, transaction); err != nil {
+	if err := executeMigrationSQL(ctx, transaction, migration.DownSQL()); err != nil {
 		return migrations.Record{}, err
 	}
 	record, err = deleteRecord(ctx, transaction, migration, session.namespace)
 	if err != nil {
 		return migrations.Record{}, err
 	}
-	if err := transaction.Commit(); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "commit rollback transaction", err)
 	}
 
@@ -617,10 +625,10 @@ func (session *session) rollbackTransaction(
 
 func setLocalStatementTimeout(
 	ctx context.Context,
-	transaction *sql.Tx,
+	transaction queryer,
 	timeout time.Duration,
 ) error {
-	_, err := transaction.ExecContext(
+	_, err := transaction.Exec(
 		ctx,
 		"SELECT set_config('statement_timeout', $1, true)",
 		strconv.FormatInt(timeout.Milliseconds(), 10)+"ms",
@@ -634,7 +642,6 @@ func setLocalStatementTimeout(
 
 func (session *session) rollbackWithoutTransaction(
 	ctx context.Context,
-	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
 ) (record migrations.Record, err error) {
 	if err = session.setSessionStatementTimeout(ctx); err != nil {
@@ -646,14 +653,14 @@ func (session *session) rollbackWithoutTransaction(
 
 	var appliedAt time.Time
 	var durationMS int64
-	err = session.connection.QueryRowContext(
+	err = session.connection.QueryRow(
 		ctx,
 		ledgerSQL(`UPDATE public.migrations SET finished_at = NULL, dirty = true WHERE version = $1 AND checksum = $2 AND dirty = false AND execution_time_ms BETWEEN 0 AND $3 RETURNING started_at, execution_time_ms`, session.namespace),
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 		maximumDurationMilliseconds,
 	).Scan(&appliedAt, &durationMS)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return migrations.Record{}, ErrLedgerConflict
 	}
 	if err != nil {
@@ -663,10 +670,10 @@ func (session *session) rollbackWithoutTransaction(
 	if err != nil {
 		return migrations.Record{}, err
 	}
-	if err := adapter.RollbackConn(ctx, session.connection); err != nil {
+	if err := executeMigrationSQL(ctx, session.connection, migration.DownSQL()); err != nil {
 		return migrations.Record{}, err
 	}
-	result, err := session.connection.ExecContext(
+	result, err := session.connection.Exec(
 		ctx,
 		ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = true`, session.namespace),
 		migrationLedgerVersion(migration),
@@ -675,11 +682,7 @@ func (session *session) rollbackWithoutTransaction(
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "delete rolled-back migration record", err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return migrations.Record{}, databaseContextFailure(ctx, "read rolled-back migration result", err)
-	}
-	if rows != 1 {
+	if result.RowsAffected() != 1 {
 		return migrations.Record{}, ErrLedgerConflict
 	}
 
@@ -696,15 +699,14 @@ func (session *session) rollbackWithoutTransaction(
 
 func (session *session) applyTransaction(
 	ctx context.Context,
-	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
 	startedAt time.Time,
 ) (record migrations.Record, err error) {
-	transaction, err := session.connection.BeginTx(ctx, nil)
+	transaction, err := session.connection.begin(ctx, pgx.TxOptions{})
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "begin migration transaction", err)
 	}
-	defer session.rollbackTransactionCleanup(transaction, &err)
+	defer session.rollbackTransactionCleanup(ctx, transaction, &err)
 	if err := setLocalStatementTimeout(ctx, transaction, session.statementTimeout); err != nil {
 		return migrations.Record{}, err
 	}
@@ -712,7 +714,7 @@ func (session *session) applyTransaction(
 	if err := insertDirty(ctx, transaction, migration, startedAt, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
-	if err := adapter.ApplyTx(ctx, transaction); err != nil {
+	if err := executeMigrationSQL(ctx, transaction, migration.UpSQL()); err != nil {
 		return migrations.Record{}, err
 	}
 
@@ -721,7 +723,7 @@ func (session *session) applyTransaction(
 	if err := markClean(ctx, transaction, migration, finishedAt, duration, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
-	if err := transaction.Commit(); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return migrations.Record{}, databaseContextFailure(ctx, "commit migration transaction", err)
 	}
 
@@ -736,18 +738,30 @@ func (session *session) applyTransaction(
 	)
 }
 
-func (session *session) rollbackTransactionCleanup(transaction *sql.Tx, result *error) {
-	if err := transaction.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-		// database/sql marks a Tx done even when its driver's rollback fails.
-		// The server outcome is then unknown, so Release must discard it.
+func (session *session) rollbackTransactionCleanup(ctx context.Context, transaction transaction, result *error) {
+	if err := rollbackTransaction(ctx, transaction); err != nil {
+		// pgx closes the connection after a failed rollback; the server outcome
+		// is then unknown, so Release must discard rather than reuse it.
 		session.tainted = true
 		*result = errors.Join(*result, databaseFailure("rollback migration transaction", err))
 	}
 }
 
+// rollbackTransaction finalizes on a detached finite deadline: caller
+// cancellation must not skip the rollback that returns the session to idle.
+// ErrTxClosed means Commit already finished the transaction.
+func rollbackTransaction(ctx context.Context, transaction transaction) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizationTimeout)
+	defer cancel()
+	if err := transaction.Rollback(cleanupCtx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		return err
+	}
+
+	return nil
+}
+
 func (session *session) applyWithoutTransaction(
 	ctx context.Context,
-	adapter *gooseadapter.Adapter,
 	migration migrations.Migration,
 	startedAt time.Time,
 ) (record migrations.Record, err error) {
@@ -761,7 +775,7 @@ func (session *session) applyWithoutTransaction(
 	if err := insertDirty(ctx, session.connection, migration, startedAt, session.namespace); err != nil {
 		return migrations.Record{}, err
 	}
-	if err := adapter.ApplyConn(ctx, session.connection); err != nil {
+	if err := executeMigrationSQL(ctx, session.connection, migration.UpSQL()); err != nil {
 		return migrations.Record{}, err
 	}
 
@@ -786,7 +800,7 @@ func (session *session) setSessionStatementTimeout(ctx context.Context) error {
 	if session.statementTimeout == 0 {
 		return nil
 	}
-	_, err := session.connection.ExecContext(
+	_, err := session.connection.Exec(
 		ctx,
 		"SELECT set_config('statement_timeout', $1, false)",
 		strconv.FormatInt(session.statementTimeout.Milliseconds(), 10)+"ms",
@@ -812,7 +826,7 @@ func (session *session) resetSessionStatementTimeout(ctx context.Context) error 
 		statementTimeoutResetLimit,
 	)
 	defer cancel()
-	if _, err := session.connection.ExecContext(
+	if _, err := session.connection.Exec(
 		resetCtx,
 		"RESET statement_timeout",
 	); err != nil {
@@ -823,18 +837,14 @@ func (session *session) resetSessionStatementTimeout(ctx context.Context) error 
 	return nil
 }
 
-type contextExecer interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}
-
 func insertDirty(
 	ctx context.Context,
-	execer contextExecer,
+	execer queryer,
 	migration migrations.Migration,
 	startedAt time.Time,
 	namespace string,
 ) error {
-	_, err := execer.ExecContext(
+	_, err := execer.Exec(
 		ctx,
 		ledgerSQL(`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, NULL, 0, true, 'postgres', 'v1')`, namespace),
 		migrationLedgerVersion(migration),
@@ -852,13 +862,13 @@ func insertDirty(
 
 func markClean(
 	ctx context.Context,
-	execer contextExecer,
+	execer queryer,
 	migration migrations.Migration,
 	finishedAt time.Time,
 	duration time.Duration,
 	namespace string,
 ) error {
-	result, err := execer.ExecContext(
+	result, err := execer.Exec(
 		ctx,
 		ledgerSQL(`UPDATE public.migrations SET finished_at = $1, execution_time_ms = $2, dirty = false WHERE version = $3 AND checksum = $4 AND dirty = true`, namespace),
 		finishedAt,
@@ -869,11 +879,7 @@ func markClean(
 	if err != nil {
 		return databaseContextFailure(ctx, "complete migration record", err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return databaseContextFailure(ctx, "read completed migration result", err)
-	}
-	if rows != 1 {
+	if result.RowsAffected() != 1 {
 		return ErrLedgerConflict
 	}
 
@@ -882,21 +888,19 @@ func markClean(
 
 func deleteRecord(
 	ctx context.Context,
-	queryer interface {
-		QueryRowContext(context.Context, string, ...any) *sql.Row
-	},
+	transaction queryer,
 	migration migrations.Migration,
 	namespace string,
 ) (migrations.Record, error) {
 	var appliedAt time.Time
 	var durationMS int64
-	err := queryer.QueryRowContext(
+	err := transaction.QueryRow(
 		ctx,
 		ledgerSQL(`DELETE FROM public.migrations WHERE version = $1 AND checksum = $2 AND dirty = false RETURNING finished_at, execution_time_ms`, namespace),
 		migrationLedgerVersion(migration),
 		migration.Checksum().String(),
 	).Scan(&appliedAt, &durationMS)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return migrations.Record{}, ErrLedgerConflict
 	}
 	if err != nil {
@@ -992,16 +996,16 @@ func (session *session) Release(ctx context.Context) error {
 	}
 
 	var unlocked bool
-	queryErr := session.connection.QueryRowContext(
+	queryErr := session.connection.QueryRow(
 		operationCtx,
 		"SELECT pg_advisory_unlock($1)",
 		advisoryLockKey,
 	).Scan(&unlocked)
 	var closeErr error
 	if queryErr != nil || session.tainted {
-		closeErr = discardConnection(session.connection)
+		closeErr = discardConnection(operationCtx, session.connection)
 	} else {
-		closeErr = session.connection.Close()
+		session.connection.release()
 	}
 	session.released = true
 	session.connection = nil
@@ -1021,16 +1025,14 @@ func (session *session) Release(ctx context.Context) error {
 	return databaseFailure("close PostgreSQL migration connection", closeErr)
 }
 
-// A failed lock query cannot establish the server's lock state. Close alone
-// returns the physical session to the pool; ErrBadConn makes sql discard it.
-func discardConnection(connection *sql.Conn) error {
-	err := connection.Raw(func(any) error { return driver.ErrBadConn })
-	closeErr := connection.Close()
-	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
-		err = nil
-	}
-	if errors.Is(closeErr, sql.ErrConnDone) {
-		closeErr = nil
-	}
-	return errors.Join(err, closeErr)
+// A failed lock query cannot establish the server's lock state, so the
+// physical session is closed rather than released to the pool. Closing ends
+// the server session, which drops its advisory locks and session settings.
+// The close runs on a detached finite deadline because the operation context
+// may already have ended.
+func discardConnection(ctx context.Context, connection connection) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizationTimeout)
+	defer cancel()
+
+	return connection.discard(cleanupCtx)
 }

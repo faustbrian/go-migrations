@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
 )
 
 func TestFSSourceLoadsCanonicalMigrationsInVersionOrder(t *testing.T) {

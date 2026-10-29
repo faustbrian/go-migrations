@@ -2,16 +2,15 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestReleaseDiscardsUncertainLockConnection(t *testing.T) {
@@ -21,9 +20,8 @@ func TestReleaseDiscardsUncertainLockConnection(t *testing.T) {
 			name = "failed unlock discards connection"
 		}
 		t.Run(name, func(t *testing.T) {
-			connector := &stateConnector{unlockFailure: failed}
-			database := stateDatabase(t, connector)
-			backend, err := New(database)
+			connector := &statePool{unlockFailure: failed}
+			backend, err := newBackend(connector)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -40,19 +38,8 @@ func TestReleaseDiscardsUncertainLockConnection(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			borrowed, err := database.Conn(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = borrowed.Close() }()
-			var reused, locked bool
-			if err := borrowed.Raw(func(raw any) error {
-				connection := raw.(*stateConnection)
-				reused, locked = connection == original, connection.locked
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
+			next := connector.nextBorrower(t)
+			reused, locked := next == original, next.locked
 			if failed && (reused || !original.closed || locked) {
 				t.Fatalf("uncertain session reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
 			}
@@ -72,12 +59,11 @@ func TestAcquireDiscardsUncertainLockAndReusesDefiniteContention(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			connector := &stateConnector{acquireScanFailure: uncertain}
+			connector := &statePool{acquireScanFailure: uncertain}
 			if !uncertain {
 				connector.contendedCancel = cancel
 			}
-			database := stateDatabase(t, connector)
-			backend, err := New(database, WithLockRetryInterval(time.Hour))
+			backend, err := newBackend(connector, WithLockRetryInterval(time.Hour))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,19 +79,8 @@ func TestAcquireDiscardsUncertainLockAndReusesDefiniteContention(t *testing.T) {
 				t.Fatalf("contended acquisition error = %v, want cancellation", err)
 			}
 			original := connector.connections[0]
-			borrowed, err := database.Conn(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = borrowed.Close() }()
-			var reused, locked bool
-			if err := borrowed.Raw(func(raw any) error {
-				connection := raw.(*stateConnection)
-				reused, locked = connection == original, connection.locked
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
+			next := connector.nextBorrower(t)
+			reused, locked := next == original, next.locked
 			if uncertain && (reused || !original.closed || locked) {
 				t.Fatalf("uncertain acquisition reused=%t physically closed=%t next borrower locked=%t", reused, original.closed, locked)
 			}
@@ -118,9 +93,8 @@ func TestAcquireDiscardsUncertainLockAndReusesDefiniteContention(t *testing.T) {
 
 func TestNoTransactionRollbackRejectsInvalidDurationWithoutChangingLedger(t *testing.T) {
 	for _, duration := range []int64{-1, math.MaxInt64} {
-		connector := &stateConnector{duration: duration}
-		database := stateDatabase(t, connector)
-		backend, err := New(database)
+		connector := &statePool{duration: duration}
+		backend, err := newBackend(connector)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,9 +123,8 @@ func TestNoTransactionRollbackRejectsInvalidDurationWithoutChangingLedger(t *tes
 func TestFailedStatementTimeoutPolicyDiscardsPhysicalSession(t *testing.T) {
 	for _, phase := range []string{"set", "reset"} {
 		t.Run(phase, func(t *testing.T) {
-			connector := &stateConnector{timeoutFailure: phase}
-			database := stateDatabase(t, connector)
-			backend, err := New(database)
+			connector := &statePool{timeoutFailure: phase}
+			backend, err := newBackend(connector)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,28 +143,17 @@ func TestFailedStatementTimeoutPolicyDiscardsPhysicalSession(t *testing.T) {
 			if err := owned.Release(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			borrowed, err := database.Conn(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = borrowed.Close() }()
-			if err := borrowed.Raw(func(raw any) error {
-				next := raw.(*stateConnection)
-				if next == original || !original.closed || next.timeoutChanged || next.locked {
-					t.Fatalf("policy failure reused=%t closed=%t next timeout changed=%t next locked=%t", next == original, original.closed, next.timeoutChanged, next.locked)
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
+			next := connector.nextBorrower(t)
+			if next == original || !original.closed || next.timeoutChanged || next.locked {
+				t.Fatalf("policy failure reused=%t closed=%t next timeout changed=%t next locked=%t", next == original, original.closed, next.timeoutChanged, next.locked)
 			}
 		})
 	}
 }
 
 func TestRecoveryMarkAppliedPreservesDirtyHistoryBeyondDurationRange(t *testing.T) {
-	connector := &stateConnector{recoveryStartedAt: time.Date(1600, 1, 1, 0, 0, 0, 0, time.UTC)}
-	database := stateDatabase(t, connector)
-	backend, err := New(database)
+	connector := &statePool{recoveryStartedAt: time.Date(1600, 1, 1, 0, 0, 0, 0, time.UTC)}
+	backend, err := newBackend(connector)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,42 +177,56 @@ func TestRecoveryMarkAppliedPreservesDirtyHistoryBeyondDurationRange(t *testing.
 	}
 }
 
-// The driver models server-owned state rather than expected call choreography:
-// ledger UPDATEs mutate state, and physical Close releases session-level locks.
-// database/sql itself owns connection reuse and discard in these regressions.
-type stateConnector struct {
+// The pool models server-owned state rather than expected call choreography:
+// ledger UPDATEs mutate state, and physical close releases session-level locks.
+// Like pgxpool, release returns a session for reuse and discard removes it.
+type statePool struct {
 	timeoutFailure     string
 	recoveryStartedAt  time.Time
 	connections        []*stateConnection
+	idle               []*stateConnection
 	unlockFailure      bool
 	acquireScanFailure bool
 	contendedCancel    context.CancelFunc
 	duration           int64
 }
 
-func (connector *stateConnector) Connect(context.Context) (driver.Conn, error) {
-	connection := &stateConnection{
-		timeoutFailure:     connector.timeoutFailure,
-		recoveryStartedAt:  connector.recoveryStartedAt,
-		dirty:              !connector.recoveryStartedAt.IsZero(),
-		unlockFailure:      connector.unlockFailure,
-		acquireScanFailure: connector.acquireScanFailure,
-		contendedCancel:    connector.contendedCancel,
-		duration:           connector.duration,
+func (pool *statePool) acquire(context.Context) (connection, error) {
+	if count := len(pool.idle); count > 0 {
+		reused := pool.idle[count-1]
+		pool.idle = pool.idle[:count-1]
+		return reused, nil
 	}
-	connector.connections = append(connector.connections, connection)
+	connection := &stateConnection{
+		pool:               pool,
+		timeoutFailure:     pool.timeoutFailure,
+		recoveryStartedAt:  pool.recoveryStartedAt,
+		dirty:              !pool.recoveryStartedAt.IsZero(),
+		unlockFailure:      pool.unlockFailure,
+		acquireScanFailure: pool.acquireScanFailure,
+		contendedCancel:    pool.contendedCancel,
+		duration:           pool.duration,
+	}
+	pool.connections = append(pool.connections, connection)
 	return connection, nil
 }
 
-func (*stateConnector) Driver() driver.Driver { return stateDriver{} }
+func (*statePool) begin(context.Context, pgx.TxOptions) (transaction, error) {
+	return nil, errors.New("transaction unsupported")
+}
 
-type stateDriver struct{}
-
-func (stateDriver) Open(string) (driver.Conn, error) {
-	return nil, errors.New("connector required")
+// nextBorrower leases the session the pool would hand the next caller.
+func (pool *statePool) nextBorrower(t *testing.T) *stateConnection {
+	t.Helper()
+	next, err := pool.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next.(*stateConnection)
 }
 
 type stateConnection struct {
+	pool               *statePool
 	timeoutFailure     string
 	timeoutChanged     bool
 	recoveryStartedAt  time.Time
@@ -264,129 +240,118 @@ type stateConnection struct {
 	downExecuted       bool
 }
 
-func (*stateConnection) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("prepare unsupported")
-}
-
-func (*stateConnection) Begin() (driver.Tx, error) {
+func (*stateConnection) begin(context.Context, pgx.TxOptions) (transaction, error) {
 	return nil, errors.New("transaction unsupported")
 }
 
-func (connection *stateConnection) Close() error {
+func (connection *stateConnection) release() {
+	if !connection.closed {
+		connection.pool.idle = append(connection.pool.idle, connection)
+	}
+}
+
+func (connection *stateConnection) discard(context.Context) error {
 	connection.closed = true
 	connection.locked = false
 	return nil
 }
 
-func (connection *stateConnection) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+func (connection *stateConnection) Exec(_ context.Context, query string, _ ...any) (pgconn.CommandTag, error) {
 	if strings.Contains(query, "set_config('statement_timeout'") {
 		connection.timeoutChanged = true
 		if connection.timeoutFailure == "set" {
-			return nil, errors.New("private set policy diagnostic")
+			return pgconn.CommandTag{}, errors.New("private set policy diagnostic")
 		}
 	}
 	if query == "RESET statement_timeout" {
 		if connection.timeoutFailure == "reset" {
-			return nil, errors.New("private reset policy diagnostic")
+			return pgconn.CommandTag{}, errors.New("private reset policy diagnostic")
 		}
 		connection.timeoutChanged = false
 	}
 	if strings.Contains(query, "down_probe") {
 		connection.downExecuted = true
 	}
-	return driver.RowsAffected(1), nil
+	return MockResult("SELECT", 1), nil
 }
 
-func (connection *stateConnection) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (*stateConnection) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("unsupported state query")
+}
+
+func (connection *stateConnection) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
 	switch {
 	case strings.Contains(query, "pg_try_advisory_lock"):
 		if connection.contendedCancel != nil {
-			return &stateRows{values: []driver.Value{false}, onClose: connection.contendedCancel}, nil
+			return stateRow{values: []any{false}, onClose: connection.contendedCancel}
 		}
 		connection.locked = true
 		if connection.acquireScanFailure {
 			// The server acquired the lock, but the reply cannot be decoded as
-			// a boolean. This is not driver.ErrBadConn and sql must not discard
-			// the physical connection automatically on our behalf.
-			return &stateRows{values: []driver.Value{"private malformed lock reply"}}, nil
+			// a boolean, so the lock state the session holds is uncertain.
+			return stateRow{values: []any{"private malformed lock reply"}}
 		}
-		return &stateRows{values: []driver.Value{true}}, nil
+		return stateRow{values: []any{true}}
 	case strings.Contains(query, "pg_advisory_unlock"):
 		if connection.unlockFailure {
-			return nil, errors.New("private unlock diagnostic")
+			return stateRow{err: errors.New("private unlock diagnostic")}
 		}
 		connection.locked = false
-		return &stateRows{values: []driver.Value{true}}, nil
+		return stateRow{values: []any{true}}
 	case strings.HasPrefix(query, "UPDATE public.migrations"):
 		if !connection.recoveryStartedAt.IsZero() {
-			finishedAt := args[0].Value.(time.Time)
+			finishedAt := args[0].(time.Time)
 			duration := finishedAt.UnixMilli() - connection.recoveryStartedAt.UnixMilli()
-			if strings.Contains(query, "floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4") && duration > args[3].Value.(int64) {
-				return &stateRows{}, nil
+			if strings.Contains(query, "floor(EXTRACT(EPOCH FROM ($1 - started_at)) * 1000)) <= $4") && duration > args[3].(int64) {
+				return stateRow{}
 			}
 			connection.dirty = false
 			if strings.Contains(query, "RETURNING execution_time_ms") {
-				return &stateRows{values: []driver.Value{duration}}, nil
+				return stateRow{values: []any{duration}}
 			}
 			if strings.Contains(query, "RETURNING started_at, execution_time_ms") {
-				return &stateRows{values: []driver.Value{connection.recoveryStartedAt, duration}}, nil
+				return stateRow{values: []any{connection.recoveryStartedAt, duration}}
 			}
-			return &stateRows{values: []driver.Value{connection.recoveryStartedAt}}, nil
+			return stateRow{values: []any{connection.recoveryStartedAt}}
 		}
 		// Apply the duration predicate, if present, before the modeled server
 		// writes dirty state, exactly as PostgreSQL evaluates UPDATE's WHERE.
 		if strings.Contains(query, "execution_time_ms BETWEEN 0 AND $3") {
-			bound := args[2].Value.(int64)
+			bound := args[2].(int64)
 			if connection.duration < 0 || connection.duration > bound {
-				return &stateRows{}, nil
+				return stateRow{}
 			}
 		}
 		connection.dirty = true
-		return &stateRows{values: []driver.Value{time.Unix(1_700_000_000, 0).UTC(), connection.duration}}, nil
+		return stateRow{values: []any{time.Unix(1_700_000_000, 0).UTC(), connection.duration}}
 	default:
-		return nil, errors.New("unsupported state query")
+		return stateRow{err: errors.New("unsupported state query")}
 	}
 }
 
-type stateRows struct {
-	values  []driver.Value
-	read    bool
+type stateRow struct {
+	values  []any
+	err     error
 	onClose func()
 }
 
-func (rows *stateRows) Columns() []string {
-	if len(rows.values) == 2 {
-		return []string{"started_at", "execution_time_ms"}
+func (row stateRow) Scan(dest ...any) error {
+	if row.onClose != nil {
+		defer row.onClose()
 	}
-	return []string{"result"}
-}
-
-func (rows *stateRows) Close() error {
-	if rows.onClose != nil {
-		rows.onClose()
-		rows.onClose = nil
+	if row.err != nil {
+		return row.err
 	}
-	return nil
-}
-
-func (rows *stateRows) Next(values []driver.Value) error {
-	if rows.read || len(rows.values) == 0 {
-		return io.EOF
+	if len(row.values) == 0 {
+		return pgx.ErrNoRows
 	}
-	rows.read = true
-	copy(values, rows.values)
-	return nil
-}
-
-func stateDatabase(t *testing.T, connector *stateConnector) *sql.DB {
-	t.Helper()
-	database := sql.OpenDB(connector)
-	database.SetMaxOpenConns(1)
-	database.SetMaxIdleConns(1)
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close state database: %v", err)
+	if len(dest) != len(row.values) {
+		return errors.New("scan destination count differs")
+	}
+	for index, value := range row.values {
+		if err := assignMockValue(dest[index], value); err != nil {
+			return err
 		}
-	})
-	return database
+	}
+	return nil
 }

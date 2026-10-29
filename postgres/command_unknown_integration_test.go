@@ -4,107 +4,13 @@ package postgres_test
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
-
-// Faults preserve real pgx/PostgreSQL SQL and transaction execution. Selected
-// acknowledgement or cleanup boundaries fail explicitly; raw catalog reads
-// establish server outcomes independently of those failures.
-type commandCommitConnector struct {
-	base            driver.Connector
-	commits         atomic.Int64
-	before          bool
-	checkpoint      bool
-	rollback        bool
-	failReservation bool
-	closed          atomic.Int64
-	rollbackArmed   atomic.Bool
-}
-
-func (c *commandCommitConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	conn, err := c.base.Connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &commandCommitConn{Conn: conn, owner: c}, nil
-}
-func (c *commandCommitConnector) Driver() driver.Driver { return c.base.Driver() }
-
-type commandCommitConn struct {
-	driver.Conn
-	owner *commandCommitConnector
-}
-
-func (c *commandCommitConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	tx, err := c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &commandCommitTx{Tx: tx, owner: c.owner}, nil
-}
-func (c *commandCommitConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
-	if c.owner.failReservation && strings.HasPrefix(q, "INSERT INTO public.golib_migration_commands(") {
-		c.owner.rollbackArmed.Store(true)
-		return nil, io.ErrUnexpectedEOF
-	}
-	if c.owner.checkpoint && strings.HasPrefix(q, "UPDATE public.golib_migration_commands SET receipts=") {
-		c.owner.rollbackArmed.Store(true)
-		return nil, io.ErrUnexpectedEOF
-	}
-	return c.Conn.(driver.ExecerContext).ExecContext(ctx, q, args)
-}
-
-func (c *commandCommitConn) Close() error {
-	c.owner.closed.Add(1)
-	return c.Conn.Close()
-}
-func (c *commandCommitConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	return c.Conn.(driver.QueryerContext).QueryContext(ctx, q, args)
-}
-func (c *commandCommitConn) Ping(ctx context.Context) error { return c.Conn.(driver.Pinger).Ping(ctx) }
-
-type commandCommitTx struct {
-	driver.Tx
-	owner *commandCommitConnector
-}
-
-func (t *commandCommitTx) Commit() error {
-	if t.owner.checkpoint || t.owner.rollback {
-		return t.Tx.Commit()
-	}
-	if t.owner.commits.Add(1) != 2 {
-		return t.Tx.Commit()
-	}
-	if t.owner.before {
-		if err := t.Tx.Rollback(); err != nil {
-			return err
-		}
-		return io.ErrUnexpectedEOF
-	}
-	if err := t.Tx.Commit(); err != nil {
-		return err
-	}
-	return io.ErrUnexpectedEOF
-}
-
-func (t *commandCommitTx) Rollback() error {
-	if t.owner.rollback && t.owner.rollbackArmed.Load() {
-		return io.ErrUnexpectedEOF
-	}
-	return t.Tx.Rollback()
-}
 
 func TestCommandRollbackFailureDiscardsOwnership(t *testing.T) {
 	for _, name := range []string{"batch", "reservation", "discovery"} {
@@ -113,12 +19,9 @@ func TestCommandRollbackFailureDiscardsOwnership(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			db, _ := isolatedMigrationDatabase(t, ctx)
-			config := commandFixturePGXConfig(t, ctx, db)
-			fault := &commandCommitConnector{base: stdlib.GetConnector(*config), checkpoint: !reservation && !discovery, rollback: true, failReservation: reservation}
-			fault.rollbackArmed.Store(discovery)
-			faultDB := sql.OpenDB(fault)
-			t.Cleanup(func() { _ = faultDB.Close() })
-			backend, err := postgres.New(faultDB)
+			fault := &postgres.CommandFault{Checkpoint: !reservation && !discovery, Rollback: true, FailReservation: reservation}
+			fault.RollbackArmed.Store(discovery)
+			backend, err := postgres.NewFaultBackend(clonePool(t, ctx, db, 0), fault)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,11 +38,11 @@ func TestCommandRollbackFailureDiscardsOwnership(t *testing.T) {
 			_, executeErr := owner.Execute(ctx, req)
 			_, _, readErr := owner.ReadProgress(ctx, req.ID)
 			releaseErr := owner.Release(ctx)
-			if errors.Is(executeErr, postgres.ErrCommandOutcomeUnknown) == discovery || !errors.Is(executeErr, postgres.ErrDatabaseOperationFailed) || !errors.Is(readErr, postgres.ErrSessionReleased) || releaseErr != nil || fault.closed.Load() != 1 {
-				t.Fatal("uncertain rollback remained reusable or pooled", executeErr, readErr, releaseErr, fault.closed.Load())
+			if errors.Is(executeErr, postgres.ErrCommandOutcomeUnknown) == discovery || !errors.Is(executeErr, postgres.ErrDatabaseOperationFailed) || !errors.Is(readErr, postgres.ErrSessionReleased) || releaseErr != nil || fault.Discarded.Load() != 1 {
+				t.Fatal("uncertain rollback remained reusable or pooled", executeErr, readErr, releaseErr, fault.Discarded.Load())
 			}
 			var untouched bool
-			if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.rollback_command') IS NULL AND to_regclass('public.golib_migrations_rollback') IS NULL").Scan(&untouched); err != nil || !untouched {
+			if err := db.QueryRow(ctx, "SELECT to_regclass('public.rollback_command') IS NULL AND to_regclass('public.golib_migrations_rollback') IS NULL").Scan(&untouched); err != nil || !untouched {
 				t.Fatal("discard failed to rollback server transaction", err)
 			}
 			clean, err := postgres.New(db)
@@ -167,10 +70,7 @@ func TestCommandCheckpointFailureRollsBackEffectsAndLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	db, _ := isolatedMigrationDatabase(t, ctx)
-	config := commandFixturePGXConfig(t, ctx, db)
-	faultDB := sql.OpenDB(&commandCommitConnector{base: stdlib.GetConnector(*config), checkpoint: true})
-	t.Cleanup(func() { _ = faultDB.Close() })
-	backend, err := postgres.New(faultDB)
+	backend, err := postgres.NewFaultBackend(clonePool(t, ctx, db, 0), &postgres.CommandFault{Checkpoint: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +92,7 @@ func TestCommandCheckpointFailureRollsBackEffectsAndLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	var untouched bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.checkpoint_command') IS NULL AND to_regclass('public.golib_migrations_checkpoint') IS NULL").Scan(&untouched); err != nil || !untouched {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.checkpoint_command') IS NULL AND to_regclass('public.golib_migrations_checkpoint') IS NULL").Scan(&untouched); err != nil || !untouched {
 		t.Fatal("checkpoint failure retained SQL/native ledger", err)
 	}
 	clean, err := postgres.New(db)
@@ -224,13 +124,7 @@ func TestCommandUnknownCommitReconciliation(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			db, _ := isolatedMigrationDatabase(t, ctx)
-			// Obtain the fixture DSN without logging it, preserving unique DB scope.
-			config := commandFixturePGXConfig(t, ctx, db)
-			fault := &commandCommitConnector{base: stdlib.GetConnector(*config), before: before}
-			faultDB := sql.OpenDB(fault)
-			t.Cleanup(func() { _ = faultDB.Close() })
-			faultDB.SetMaxOpenConns(1)
-			backend, err := postgres.New(faultDB)
+			backend, err := postgres.NewFaultBackend(clonePool(t, ctx, db, 1), &postgres.CommandFault{Before: before})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,7 +146,7 @@ func TestCommandUnknownCommitReconciliation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var effect bool
-			if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.unknown_command') IS NOT NULL").Scan(&effect); err != nil || effect == before {
+			if err := db.QueryRow(ctx, "SELECT to_regclass('public.unknown_command') IS NOT NULL").Scan(&effect); err != nil || effect == before {
 				t.Fatal("fault did not establish intended server outcome", err)
 			}
 			clean, err := postgres.New(db)
@@ -278,27 +172,4 @@ func TestCommandUnknownCommitReconciliation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Clone the existing disposable connection's configuration so competing/fault
-// clients use exactly that fixture, whether supplied locally or container-owned.
-func commandFixturePGXConfig(t *testing.T, ctx context.Context, db *sql.DB) *pgx.ConnConfig {
-	t.Helper()
-	connection, err := db.Conn(ctx)
-	if err != nil {
-		t.Fatal("cannot borrow disposable fixture connection")
-	}
-	defer connection.Close()
-	var config *pgx.ConnConfig
-	if err := connection.Raw(func(raw any) error {
-		conn, ok := raw.(*stdlib.Conn)
-		if !ok {
-			return errors.New("unexpected disposable driver")
-		}
-		config = conn.Conn().Config()
-		return nil
-	}); err != nil {
-		t.Fatal("cannot clone disposable fixture configuration")
-	}
-	return config
 }

@@ -5,7 +5,6 @@ package postgres_test
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -16,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -47,7 +46,7 @@ func TestReadLedgerAgainstReadOnlyPostgreSQL(t *testing.T) {
 
 // Each caller owns a unique database on the explicitly authorized disposable
 // cluster; no test can install schema into another test's ledger.
-func isolatedMigrationDatabase(t *testing.T, ctx context.Context) (*sql.DB, *sql.DB) {
+func isolatedMigrationDatabase(t *testing.T, ctx context.Context) (*pgxpool.Pool, *pgxpool.Pool) {
 	t.Helper()
 	portText, passwordFile := os.Getenv("MIGRATION_DISCOVERY_POSTGRES_PORT"), os.Getenv("MIGRATION_DISCOVERY_PASSWORD_FILE")
 	var u url.URL
@@ -97,55 +96,71 @@ func isolatedMigrationDatabase(t *testing.T, ctx context.Context) (*sql.DB, *sql
 	q := u.Query()
 	q.Set("sslmode", "disable")
 	u.RawQuery = q.Encode()
-	root, err := sql.Open("pgx", u.String())
+	root, err := pgxpool.New(ctx, u.String())
 	if err != nil {
 		t.Fatal("cannot open fixture owner")
 	}
-	t.Cleanup(func() { _ = root.Close() })
+	t.Cleanup(root.Close)
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		t.Fatal("cannot name isolated database")
 	}
 	name := "discovery_" + hex.EncodeToString(nonce[:])
-	if _, err := root.ExecContext(ctx, `CREATE DATABASE "`+name+`"`); err != nil {
+	if _, err := root.Exec(ctx, `CREATE DATABASE "`+name+`"`); err != nil {
 		t.Fatal("cannot create isolated fixture database")
 	}
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if _, err := root.ExecContext(cleanup, `DROP DATABASE "`+name+`"`); err != nil {
+		if _, err := root.Exec(cleanup, `DROP DATABASE "`+name+`"`); err != nil {
 			t.Error("isolated fixture database cleanup failed")
 		}
 	})
 	u.Path = "/" + name
-	admin, err := sql.Open("pgx", u.String())
+	admin, err := pgxpool.New(ctx, u.String())
 	if err != nil {
 		t.Fatal("cannot open disposable fixture")
 	}
-	t.Cleanup(func() { _ = admin.Close() })
-	if err := admin.PingContext(ctx); err != nil {
+	t.Cleanup(admin.Close)
+	if err := admin.Ping(ctx); err != nil {
 		t.Fatal("disposable fixture unavailable")
 	}
 	// Pass the startup setting directly: libpq-style URL parsing preserves
 	// literal '+' characters instead of form-decoding option-string spaces.
 	q.Set("default_transaction_read_only", "on")
 	u.RawQuery = q.Encode()
-	readonly, err := sql.Open("pgx", u.String())
+	readonly, err := pgxpool.New(ctx, u.String())
 	if err != nil {
 		t.Fatal("cannot open read-only fixture")
 	}
-	t.Cleanup(func() { _ = readonly.Close() })
+	t.Cleanup(readonly.Close)
 	return admin, readonly
 }
 
-func assertReadOnlyDiscovery(t *testing.T, ctx context.Context, admin, readonly *sql.DB, reader *postgres.Backend) {
+// clonePool opens another pool on the same disposable fixture so contenders
+// and fault clients use exactly that database. A positive maxConns caps it.
+func clonePool(t *testing.T, ctx context.Context, db *pgxpool.Pool, maxConns int32) *pgxpool.Pool {
+	t.Helper()
+	config := db.Config()
+	if maxConns > 0 {
+		config.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal("cannot clone disposable fixture pool")
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func assertReadOnlyDiscovery(t *testing.T, ctx context.Context, admin, readonly *pgxpool.Pool, reader *postgres.Backend) {
 	t.Helper()
 	records, err := reader.ReadLedger(ctx)
 	if err != nil || len(records) != 0 {
 		t.Fatal("fresh read-only discovery attempted preparation", err)
 	}
 	var exists bool
-	if err := admin.QueryRowContext(ctx, "SELECT to_regclass('public.migrations') IS NOT NULL").Scan(&exists); err != nil || exists {
+	if err := admin.QueryRow(ctx, "SELECT to_regclass('public.migrations') IS NOT NULL").Scan(&exists); err != nil || exists {
 		t.Fatal("discovery created a ledger")
 	}
 	step, err := migrations.NewMigration(1, "discovery_consumer", migrations.TransactionModeDefault, "CREATE TABLE public.discovery_consumer(id bigint PRIMARY KEY)", "")
@@ -181,12 +196,12 @@ func assertReadOnlyDiscovery(t *testing.T, ctx context.Context, admin, readonly 
 	}
 	// Waiting on a real exclusive DDL lock must honor the discovery budget and
 	// release its borrowed transaction/connection after cancellation.
-	lock, err := admin.BeginTx(ctx, nil)
+	lock, err := admin.Begin(ctx)
 	if err != nil {
 		t.Fatal("cannot establish fixture lock")
 	}
-	defer lock.Rollback()
-	if _, err := lock.ExecContext(ctx, "LOCK TABLE public.migrations IN ACCESS EXCLUSIVE MODE"); err != nil {
+	defer func() { _ = lock.Rollback(ctx) }()
+	if _, err := lock.Exec(ctx, "LOCK TABLE public.migrations IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal("cannot hold fixture lock")
 	}
 	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
@@ -195,10 +210,10 @@ func assertReadOnlyDiscovery(t *testing.T, ctx context.Context, admin, readonly 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("blocked discovery ignored deadline", err)
 	}
-	if err := lock.Rollback(); err != nil {
+	if err := lock.Rollback(ctx); err != nil {
 		t.Fatal("cannot release fixture lock")
 	}
-	if _, err := admin.ExecContext(ctx, "UPDATE public.migrations SET dirty=true, finished_at=NULL WHERE version=1"); err != nil {
+	if _, err := admin.Exec(ctx, "UPDATE public.migrations SET dirty=true, finished_at=NULL WHERE version=1"); err != nil {
 		t.Fatal("cannot establish dirty history")
 	}
 	records, err = reader.ReadLedger(ctx)
@@ -208,13 +223,13 @@ func assertReadOnlyDiscovery(t *testing.T, ctx context.Context, admin, readonly 
 	if _, err := migrations.PlanUp([]migrations.Migration{step}, records); !errors.Is(err, migrations.ErrDirty) {
 		t.Fatal("dirty history planned as healthy")
 	}
-	if _, err := admin.ExecContext(ctx, "DROP TABLE public.migrations; CREATE VIEW public.migrations AS SELECT 1 AS version"); err != nil {
+	if _, err := admin.Exec(ctx, "DROP TABLE public.migrations; CREATE VIEW public.migrations AS SELECT 1 AS version"); err != nil {
 		t.Fatal("cannot establish foreign relation fixture")
 	}
 	if records, err := reader.ReadLedger(ctx); !errors.Is(err, postgres.ErrLedgerConflict) || len(records) != 0 {
 		t.Fatal("foreign relation admitted", err)
 	}
-	if err := readonly.PingContext(ctx); err != nil {
+	if err := readonly.Ping(ctx); err != nil {
 		t.Fatal("borrowed pool was closed")
 	}
 }

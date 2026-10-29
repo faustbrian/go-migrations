@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 type namespaceHistory []migrations.Migration
@@ -76,7 +76,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	}
 	assertHistory(readB, nil, false)
 	var exists bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.golib_migrations_lifecycle') IS NOT NULL").Scan(&exists); err != nil || exists {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.golib_migrations_lifecycle') IS NOT NULL").Scan(&exists); err != nil || exists {
 		t.Fatal("read-only owner discovery prepared schema")
 	}
 	if _, err := b.InstallFresh(ctx, []migrations.Migration{second}, ""); err != nil {
@@ -96,7 +96,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	if _, err := failed.InstallFresh(ctx, []migrations.Migration{good, bad}, "CREATE TABLE public.failed_setup(id bigint)"); !errors.Is(err, migrations.ErrExecutionFailed) {
 		t.Fatal("failed owner install escaped", err)
 	}
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.failed_first') IS NOT NULL OR to_regclass('public.failed_setup') IS NOT NULL OR to_regclass('public.golib_migrations_failed') IS NOT NULL").Scan(&exists); err != nil || exists {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.failed_first') IS NOT NULL OR to_regclass('public.failed_setup') IS NOT NULL OR to_regclass('public.golib_migrations_failed') IS NOT NULL").Scan(&exists); err != nil || exists {
 		t.Fatal("failed selected install retained effects")
 	}
 	assertHistory(base, []migrations.Migration{defaultStep}, false)
@@ -122,7 +122,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 			t.Fatal("selected Down failed", err)
 		}
 		assertHistory(selected, nil, false)
-		if err := db.QueryRowContext(ctx, "SELECT to_regclass($1) IS NOT NULL", "public."+name).Scan(&exists); err != nil || exists {
+		if err := db.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", "public."+name).Scan(&exists); err != nil || exists {
 			t.Fatal("selected rollback omitted schema effect")
 		}
 		assertHistory(base, []migrations.Migration{defaultStep}, false)
@@ -140,7 +140,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	}
 	seedDirty := func(table string) {
 		t.Helper()
-		if _, err := db.ExecContext(ctx, "UPDATE public."+table+" SET dirty=true, finished_at=NULL"); err != nil {
+		if _, err := db.Exec(ctx, "UPDATE public."+table+" SET dirty=true, finished_at=NULL"); err != nil {
 			t.Fatal("cannot seed owner recovery fixture")
 		}
 	}
@@ -180,7 +180,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	assertHistory(base, []migrations.Migration{defaultStep}, false)
 
 	foreign := owner("foreign")
-	if _, err := db.ExecContext(ctx, "CREATE VIEW public.golib_migrations_foreign AS SELECT 1 AS version"); err != nil {
+	if _, err := db.Exec(ctx, "CREATE VIEW public.golib_migrations_foreign AS SELECT 1 AS version"); err != nil {
 		t.Fatal("cannot establish selected foreign relation")
 	}
 	if records, err := foreign.ReadLedger(ctx); !errors.Is(err, postgres.ErrLedgerConflict) || len(records) != 0 {
@@ -189,7 +189,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 
 	// Inspection excludes only the selected ledger, including its RLS policies;
 	// other owner ledgers and ordinary database schema remain fingerprint inputs.
-	if _, err := db.ExecContext(ctx, "ALTER TABLE public.golib_migrations_outbox ENABLE ROW LEVEL SECURITY; CREATE POLICY selected_policy ON public.golib_migrations_outbox USING (true)"); err != nil {
+	if _, err := db.Exec(ctx, "ALTER TABLE public.golib_migrations_outbox ENABLE ROW LEVEL SECURITY; CREATE POLICY selected_policy ON public.golib_migrations_outbox USING (true)"); err != nil {
 		t.Fatal("cannot establish ledger policy")
 	}
 	objects, err := a.InspectObjects(ctx)
@@ -238,7 +238,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Release(context.Background())
+	defer func() { _ = held.Release(context.Background()) }()
 	short, stop := context.WithTimeout(ctx, 40*time.Millisecond)
 	_, err = b.Acquire(short)
 	stop()
@@ -255,7 +255,7 @@ func TestNamespaceIndependentHistoriesPostgreSQL(t *testing.T) {
 	if err := reacquired.Release(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.PingContext(ctx); err != nil {
+	if err := db.Ping(ctx); err != nil {
 		t.Fatal("namespace owner closed borrowed pool")
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
 )
 
 // Successful decoding must preserve representable ledger values exactly;

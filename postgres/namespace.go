@@ -5,7 +5,7 @@ import "strings"
 const namespaceLedgerPrefix = "golib_migrations_"
 
 // ForNamespace derives an IO-free backend for one independent migration owner.
-// It borrows the same database and copies timeout policy without changing the
+// It borrows the same pool and copies timeout policy without changing the
 // receiver. Namespace is canonical lowercase ASCII snake case, starts with a
 // letter, and contains 1..46 bytes. Empty, uppercase, ambiguous or oversized
 // names return ErrInvalidConfig; values are never normalized or truncated.
@@ -21,9 +21,9 @@ const namespaceLedgerPrefix = "golib_migrations_"
 // ledger's objects are excluded; nonselected ledgers remain visible. All owners
 // retain the same native advisory lock so schema mutation stays serialized.
 // Derived backends are safe for concurrent use with immutable configuration;
-// the caller retains database ownership. Nil/zero receivers deny without IO.
+// the caller retains pool ownership. Nil/zero receivers deny without IO.
 func (backend *Backend) ForNamespace(namespace string) (*Backend, error) {
-	if backend == nil || backend.database == nil || !validNamespace(namespace) {
+	if backend == nil || backend.pool == nil || !validNamespace(namespace) {
 		return nil, ErrInvalidConfig
 	}
 	derived := *backend

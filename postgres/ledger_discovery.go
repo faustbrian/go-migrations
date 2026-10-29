@@ -2,10 +2,10 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 const ledgerRecordsSQL = "SELECT kind, version, name, checksum, started_at, finished_at, execution_time_ms, dirty FROM public.migrations ORDER BY version ASC"
@@ -17,7 +17,7 @@ const ledgerRecordsSQL = "SELECT kind, version, name, checksum, started_at, fini
 //
 // Discovery uses one bounded repeatable-read, read-only transaction and the
 // same row validation and resource limits as Session.Records. Returned records
-// are caller-owned; dirty records remain dirty. The borrowed database stays
+// are caller-owned; dirty records remain dirty. The borrowed pool stays
 // open. Error formatting is redacted; errors.Is preserves classification and
 // error traversal may expose driver causes. Do not log unwrapped diagnostics.
 // Concurrent calls are safe. Nil/canceled contexts deny before database IO.
@@ -27,7 +27,7 @@ const ledgerRecordsSQL = "SELECT kind, version, name, checksum, started_at, fini
 // execution must rediscover and validate history under acquired ownership.
 // Runner.Status/Plan retain their existing locked preparation behavior.
 func (backend *Backend) ReadLedger(ctx context.Context) (records []migrations.Record, err error) {
-	if backend == nil || backend.database == nil || ctx == nil {
+	if backend == nil || backend.pool == nil || ctx == nil {
 		return nil, ErrInvalidConfig
 	}
 	if err := ctx.Err(); err != nil {
@@ -35,20 +35,16 @@ func (backend *Backend) ReadLedger(ctx context.Context) (records []migrations.Re
 	}
 	bounded, cancel := boundedOperationContext(ctx, backend.operationTimeout)
 	defer cancel()
-	return readOwnedLedger(bounded, backend.database, backend.namespace, nil)
+	return readOwnedLedger(bounded, backend.pool, backend.namespace, nil)
 }
 
-type ledgerBeginner interface {
-	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
-}
-
-func readOwnedLedger(bounded context.Context, database ledgerBeginner, namespace string, rollbackFailed func()) (records []migrations.Record, err error) {
-	tx, err := database.BeginTx(bounded, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+func readOwnedLedger(bounded context.Context, database transactionBeginner, namespace string, rollbackFailed func()) (records []migrations.Record, err error) {
+	tx, err := database.begin(bounded, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "begin ledger discovery", err)
 	}
 	defer func() {
-		if cleanupErr := tx.Rollback(); cleanupErr != nil && !errors.Is(cleanupErr, sql.ErrTxDone) {
+		if cleanupErr := rollbackTransaction(bounded, tx); cleanupErr != nil {
 			if rollbackFailed != nil {
 				rollbackFailed()
 			}
@@ -57,8 +53,8 @@ func readOwnedLedger(bounded context.Context, database ledgerBeginner, namespace
 		}
 	}()
 	var kind string
-	err = tx.QueryRowContext(bounded, `SELECT c.relkind::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='`+ledgerName(namespace)+`'`).Scan(&kind)
-	if errors.Is(err, sql.ErrNoRows) {
+	err = tx.QueryRow(bounded, `SELECT c.relkind::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='`+ledgerName(namespace)+`'`).Scan(&kind)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -67,10 +63,10 @@ func readOwnedLedger(bounded context.Context, database ledgerBeginner, namespace
 	if kind != "r" && kind != "p" {
 		return nil, ErrLedgerConflict
 	}
-	rows, err := tx.QueryContext(bounded, ledgerSQL(ledgerRecordsSQL, namespace))
+	rows, err := tx.Query(bounded, ledgerSQL(ledgerRecordsSQL, namespace))
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "query migration ledger", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 	return decodeLedgerRows(bounded, rows)
 }

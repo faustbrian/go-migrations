@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 type namespaceSelector interface {
@@ -16,7 +15,7 @@ type namespaceSelector interface {
 
 func TestNamespaceSelectionIsExplicitAndDoesNotAdoptDefaultHistory(t *testing.T) {
 	db, mock := newMockDatabase(t)
-	backend, err := postgres.New(db)
+	backend, err := postgres.NewMockBackend(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,13 +28,13 @@ func TestNamespaceSelectionIsExplicitAndDoesNotAdoptDefaultHistory(t *testing.T)
 		t.Fatal(err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT.*relkind.*relname='golib_migrations_outbox'").WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
+	mock.ExpectQuery("SELECT.*relkind.*relname='golib_migrations_outbox'").WillReturnRows(postgres.NewMockRows([]string{"relkind"}))
 	mock.ExpectRollback()
 	if records, err := scoped.ReadLedger(context.Background()); err != nil || len(records) != 0 {
 		t.Fatal("missing owner history adopted another ledger", err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT.*relkind.*relname='migrations'").WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
+	mock.ExpectQuery("SELECT.*relkind.*relname='migrations'").WillReturnRows(postgres.NewMockRows([]string{"relkind"}))
 	mock.ExpectRollback()
 	if records, err := backend.ReadLedger(context.Background()); err != nil || len(records) != 0 {
 		t.Fatal("selection mutated original backend", err)
@@ -45,7 +44,7 @@ func TestNamespaceSelectionIsExplicitAndDoesNotAdoptDefaultHistory(t *testing.T)
 
 func TestNamespaceSelectionRejectsAliasesBeforeIO(t *testing.T) {
 	db, mock := newMockDatabase(t)
-	backend, _ := postgres.New(db)
+	backend, _ := postgres.NewMockBackend(db)
 	selector, ok := any(backend).(namespaceSelector)
 	if !ok {
 		t.Fatal("native backend cannot select independent owner history")

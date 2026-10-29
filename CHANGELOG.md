@@ -5,6 +5,38 @@ and Semantic Versioning.
 
 ## Unreleased
 
+These changes form the v5.0.0 major.
+
+### Changed
+
+- Drive the PostgreSQL backend with pgx v5. `postgres.New` takes a
+  caller-owned `*pgxpool.Pool` instead of a `*sql.DB`; to migrate, replace
+  `/v4` with `/v5` in imports and pass the application's pgx pool, for example
+  from `pgxpool.New`, instead of a `database/sql` handle opened through
+  `pgx/v5/stdlib`. Options, `Backend` and command-session methods and error
+  categories are otherwise unchanged. Each session still leases one connection
+  from `Acquire` until `Release`, so size the pool for concurrent sessions plus
+  inspection and discovery.
+- Close and remove from the pool, rather than release, any session whose lock,
+  rollback or statement-timeout state is uncertain. Rollback and that close
+  now use a detached 30-second deadline instead of context-free `database/sql`
+  calls, and a transaction whose connection pgx already closed after caller
+  cancellation no longer adds a rollback failure to a pure cancellation.
+- Return `migrations.ErrInvalidVersion` for a zero `Migration` passed to
+  `Apply` or `Rollback` instead of an internal adapter error.
+- Move the module to `github.com/faustbrian/go-migrations/v5`. The ledger,
+  checksum framing, schema fingerprint and advisory lock key are unchanged, so
+  v4 and v5 runners serialize on the same lock and share history without
+  alignment. Multi-statement migration SQL still executes as one request over
+  the simple query protocol.
+
+### Removed
+
+- Remove the internal Goose execution adapter and the `pressly/goose`,
+  `database/sql` and `go-sqlmock` dependencies. Migration SQL runs directly on
+  the session's pgx transaction or lock connection with the same redacted
+  execution errors.
+
 ## 4.0.0 - 2026-10-22
 
 ### Removed
