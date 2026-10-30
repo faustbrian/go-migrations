@@ -19,9 +19,9 @@ fi
 # non-releasable v4/v5 interop harness drives published v4, which still takes
 # a *sql.DB, so it is the one excluded directory (testdata/interop).
 forbidden_imports="$(
-    grep -RInE --include='*.go' --exclude-dir=interop \
+    grep -RInE --include='*.go' \
         '"(database/sql|database/sql/driver|github\.com/lib/pq|github\.com/jackc/pgx/v5/stdlib|github\.com/pressly/goose[^"]*|github\.com/DATA-DOG/go-sqlmock)"' \
-        . || true
+        . | grep -v '^\./testdata/interop/' || true
 )"
 if [ -n "$forbidden_imports" ]; then
     echo "Only pgx may reach PostgreSQL; forbidden imports:" >&2

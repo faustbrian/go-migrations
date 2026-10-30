@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type executionError struct {
@@ -29,11 +30,23 @@ func (err *executionError) Unwrap() error {
 // contain several statements.
 func executeMigrationSQL(ctx context.Context, execer queryer, statement string) error {
 	if _, err := execer.Exec(ctx, statement); err != nil {
+		// A pool using pgconn's CancelRequestContextWatcherHandler reports the
+		// caller's cancellation as SQLSTATE 57014 query_canceled rather than a
+		// context error. With the context already done that is the caller's
+		// cancellation; with a live context 57014 means statement_timeout.
+		var pgErr *pgconn.PgError
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.As(err, &pgErr) && pgErr.Code == queryCanceledCode {
+			return &executionError{cause: ctxErr}
+		}
 		return redactExecutionError(err)
 	}
 
 	return nil
 }
+
+// queryCanceledCode is PostgreSQL's SQLSTATE for a canceled statement
+// (https://www.postgresql.org/docs/current/errcodes-appendix.html).
+const queryCanceledCode = "57014"
 
 // A zero Migration is the only invalid value callers can construct without
 // NewMigration, which owns validation through private fields.

@@ -104,7 +104,9 @@ error chains.
 Each session leases one pool connection from `Acquire` until `Release`, as it
 leased one `*sql.Conn` before. A pool must allow one connection per concurrent
 session plus any concurrent `Inspect`, `InspectObjects` or `ReadLedger` call;
-`pgxpool` defaults to the larger of four and the CPU count. A session whose
+`pgxpool` defaults to the larger of four and the CPU count. Release every
+session before closing the pool: `pgxpool.Pool.Close` waits for every leased
+connection, so an unreleased session makes it block. A session whose
 lock, rollback or statement-timeout state is uncertain is closed and removed
 from the pool instead of being returned. Rollback and that close now run on a
 detached 30-second deadline instead of a context-free `database/sql` call.

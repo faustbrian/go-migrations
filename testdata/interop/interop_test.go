@@ -34,6 +34,7 @@ var (
 	cleanStep    = step{2, "clean_table", 0, "CREATE TABLE public.interop_clean(id int PRIMARY KEY);\nINSERT INTO public.interop_clean VALUES (1);\n", "DROP TABLE public.interop_clean;"}
 	dirtyStep    = step{3, "dirty_index", 1, "SELECT 1/0;", ""}
 	appendStep   = step{4, "appended_by_v5", 0, "CREATE TABLE public.interop_v5(id int);", ""}
+	v5DirtyStep  = step{5, "dirty_by_v5", 1, "SELECT 1/0;", ""}
 	ownerFirst   = step{1, "owner_first", 0, "CREATE TABLE public.interop_owner(id int);", ""}
 	ownerSecond  = step{2, "owner_second", 0, "ALTER TABLE public.interop_owner ADD COLUMN note text;", ""}
 	commandFirst = step{1, "command_first", 0, "CREATE TABLE public.interop_command_first(id int);", ""}
@@ -168,6 +169,82 @@ func TestV5ContinuesHistoryWrittenByV4(t *testing.T) {
 	}
 	if progress.Receipts()[0].Record.AppliedAt() != stored.Receipts()[0].Record.AppliedAt() {
 		t.Fatal("v5 resume rewrote the v4 command receipt")
+	}
+	if err := commands.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	assertV4ContinuesV5History(t, ctx, legacy, backend)
+}
+
+// assertV4ContinuesV5History covers the rollback direction of a mixed
+// rollout: v4 must read what v5 appended and completed, recover a dirty row
+// v5 left, and fingerprint the same schema identically.
+func assertV4ContinuesV5History(t *testing.T, ctx context.Context, legacy *v4postgres.Backend, backend *v5postgres.Backend) {
+	t.Helper()
+	legacyFingerprint, err := legacy.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentFingerprint, err := backend.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyFingerprint.String() != currentFingerprint.String() {
+		t.Fatalf("schema fingerprint v4 %s, v5 %s", legacyFingerprint, currentFingerprint)
+	}
+
+	legacyOwner, err := legacy.ForNamespace("interop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerRecords, err := legacyOwner.ReadLedger(ctx)
+	if err != nil || len(ownerRecords) != 2 || ownerRecords[1].Dirty() || ownerRecords[1].Checksum().String() != ownerSecond.v4(t).Checksum().String() {
+		t.Fatalf("v4 namespaced read of v5 append = %v, %v", ownerRecords, err)
+	}
+
+	legacyCommands, err := legacy.AcquireCommand(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, exists, err := legacyCommands.ReadProgress(ctx, commandID)
+	if err != nil || !exists || !stored.Complete() || len(stored.Receipts()) != 2 {
+		t.Fatalf("v4 read of v5-completed command = %v exists=%t: %v", stored.Receipts(), exists, err)
+	}
+	replayed, err := legacyCommands.Execute(ctx, v4Command(t))
+	if err != nil || !replayed.Complete() || len(replayed.Receipts()) != 2 {
+		t.Fatalf("v4 replay of v5-completed command = %v: %v", replayed.Receipts(), err)
+	}
+	if err := legacyCommands.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := backend.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Apply(ctx, v5DirtyStep.v5(t)); !errors.Is(err, v5.ErrExecutionFailed) {
+		t.Fatalf("v5 failing no-transaction apply error = %v, want execution failure", err)
+	}
+	if err := session.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	legacySession, err := legacy.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoverer := legacySession.(interface {
+		Recover(context.Context, v4.Migration, v4.RecoveryAction) (v4.Record, error)
+	})
+	if _, err := recoverer.Recover(ctx, v5DirtyStep.v4(t), v4.RecoveryMarkRolledBack); err != nil {
+		t.Fatalf("v4 recovery of v5 dirty row: %v", err)
+	}
+	if err := legacySession.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	records, err := backend.ReadLedger(ctx)
+	if err != nil || len(records) != 4 || records[3].Version() != 4 || records[3].Dirty() {
+		t.Fatalf("history after v4 recovered the v5 dirty row = %v, %v", records, err)
 	}
 }
 

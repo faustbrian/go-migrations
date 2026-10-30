@@ -337,8 +337,8 @@ func TestPgxCancelRequestKeepsSessionAndRestoresIt(t *testing.T) {
 	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
 	_, err = session.Apply(short, migration)
 	stop()
-	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
-		t.Fatalf("Apply() error = %v, want redacted execution failure without cleanup failure", err)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, postgres.ErrDatabaseOperationFailed) {
+		t.Fatalf("Apply() error = %v, want the caller deadline without cleanup failure", err)
 	}
 	if err := session.Release(context.Background()); err != nil {
 		t.Fatalf("Release() after cancel request error = %v, want nil", err)

@@ -11,6 +11,7 @@ import (
 
 	migrations "github.com/faustbrian/go-migrations/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestMigrationSQLRunsOnTheCallerOwnedExecutor(t *testing.T) {
@@ -194,4 +195,43 @@ func TestClosedSessionCleanupAddsNoDatabaseFailure(t *testing.T) {
 		t.Fatalf("second Release() error = %v, want ErrSessionReleased", err)
 	}
 	assertFaultExpectations(t, mock)
+}
+
+// PostgreSQL reports a cancel request as SQLSTATE 57014. When the caller's
+// context ended, that is the caller's cancellation; with a live context the
+// same code means statement_timeout and stays an execution failure.
+func TestCancelRequestReportsCallerCancellation(t *testing.T) {
+	t.Parallel()
+
+	const statement = "SELECT pg_sleep(10);"
+	canceled := &pgconn.PgError{Code: "57014", Message: "private canceling statement due to user request"}
+	for _, test := range []struct {
+		name    string
+		cancel  bool
+		context bool
+	}{
+		{name: "caller canceled", cancel: true, context: true},
+		{name: "statement timeout", cancel: false, context: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if test.cancel {
+				cancel()
+			}
+			mock := NewMockConn()
+			mock.ExpectExec(regexp.QuoteMeta(statement)).WillReturnError(canceled)
+			err := executeMigrationSQL(ctx, mock, statement)
+			if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, canceled) {
+				t.Fatalf("error = %v, want redacted execution failure", err)
+			}
+			if errors.Is(err, context.Canceled) != test.context || onlyContextCauses(err) != test.context {
+				t.Fatalf("error = %v, caller cancellation reported %t, want %t", err, errors.Is(err, context.Canceled), test.context)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", err), "private") {
+				t.Fatal("cancel-request error exposed driver diagnostics")
+			}
+		})
+	}
 }
