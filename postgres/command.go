@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
 )
 
 // ErrCommandConflict means the exact command, source, base or prefix differs.
@@ -116,7 +116,7 @@ func (p CommandProgress) Complete() bool { return p.complete }
 
 // CommandSession retains one native global ownership interval and physical
 // connection across independent namespaces. Methods serialize with Release;
-// each has a bounded context. Release is required; the database stays borrowed.
+// each has a bounded context. Release is required; the pool stays borrowed.
 type CommandSession struct{ owned *session }
 
 // AcquireCommand acquires native ownership without preparing any schema.
@@ -133,7 +133,7 @@ func (b *Backend) AcquireCommand(ctx context.Context) (*CommandSession, error) {
 }
 
 // Release releases/discards the native connection; use a finite independent
-// cleanup context after cancellation. It does not close the borrowed database.
+// cleanup context after cancellation. It does not close the borrowed pool.
 func (s *CommandSession) Release(ctx context.Context) error {
 	if s == nil || s.owned == nil || ctx == nil {
 		return ErrInvalidConfig

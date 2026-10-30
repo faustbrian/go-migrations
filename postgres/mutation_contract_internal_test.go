@@ -8,15 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
 )
 
 func TestLedgerAcceptsCompleteBoundedHistory(t *testing.T) {
 	t.Parallel()
 
 	owned, mock := faultSession(t, 0)
-	rows := sqlmock.NewRows([]string{
+	rows := NewMockRows([]string{
 		"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty",
 	})
 	checksum := migrations.ChecksumData([]byte("reviewed schema")).String()
@@ -148,7 +147,7 @@ func TestCatalogQueryFailureReturnsRedactedErrorWithoutRows(t *testing.T) {
 	t.Parallel()
 
 	database, mock := faultDatabase(t)
-	backend, err := New(database)
+	backend, err := newBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

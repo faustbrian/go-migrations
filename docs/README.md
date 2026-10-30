@@ -2,15 +2,16 @@
 
 [Repository entry](../README.md) · [Versioned ecosystem](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
 
-This source contains the v4 `migrations` module for deterministic,
-engine-neutral database migrations; v1 and v2 remain available. The
+This source contains the v5 `migrations` module for deterministic,
+engine-neutral database migrations with a pgx-driven PostgreSQL backend;
+earlier majors remain available at their original module paths. The
 root package owns migration identity and orchestration,
 `postgres` owns the PostgreSQL ledger and advisory-lock session,
 `adapters/service` adapts an explicit runner to a one-shot Service v3 command,
 and `conformance` is the backend testing helper. The caller owns the source,
-observer, and database; operations accept context cancellation and the module
+observer, and pgx pool; operations accept context cancellation and the module
 starts no background work. The threat model records the security controls and
-accepted risks for the v4 boundary.
+accepted risks for the v5 boundary.
 
 ## Getting started
 
@@ -18,8 +19,8 @@ accepted risks for the v4 boundary.
 - [Executable deployment-job example](../examples/job/main.go)
 - [PostgreSQL integration](go-postgres.md)
 - [Architecture and engine contract](architecture.md)
-- [V4 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4)
-- [V4 backend conformance helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4/conformance)
+- [V5 API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v5)
+- [V5 backend conformance helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v5/conformance)
 
 ## Operations
 

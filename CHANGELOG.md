@@ -5,6 +5,68 @@ and Semantic Versioning.
 
 ## Unreleased
 
+These changes form the v5.0.0 major.
+
+### Changed
+
+- Drive the PostgreSQL backend with pgx v5. `postgres.New` takes a
+  caller-owned `*pgxpool.Pool` instead of a `*sql.DB`; to migrate, replace
+  `/v4` with `/v5` in imports and pass the application's pgx pool, for example
+  from `pgxpool.New`, instead of a `database/sql` handle opened through
+  `pgx/v5/stdlib`. Options, `Backend` and command-session methods and error
+  categories are otherwise unchanged. Each session still leases one connection
+  from `Acquire` until `Release`, so size the pool for concurrent sessions plus
+  inspection and discovery. Unwrapped driver causes are now pgx and pgconn
+  errors; `database/sql` sentinels such as `sql.ErrConnDone`, `sql.ErrTxDone`
+  and `driver.ErrBadConn` no longer appear in error chains.
+- Run transaction rollback and the close that discards an uncertain session
+  on a detached 30-second deadline instead of context-free `database/sql`
+  calls. A failed baseline rollback now discards the session instead of
+  returning it to the pool.
+- Keep a cancelled operation a pure cancellation through `Runner` results
+  and service exit codes. When caller cancellation interrupts a statement,
+  pgx closes the connection and PostgreSQL ends the session, dropping its
+  transaction, `statement_timeout` and advisory lock. Rollback, timeout
+  restoration and `Release` then discard that closed session without
+  reporting a cleanup or lock-release failure. Unlock and restoration
+  failures on a live connection are still reported.
+- Return `migrations.ErrInvalidVersion` for a zero `Migration` passed to
+  `Apply` or `Rollback` instead of an internal adapter error.
+- Reject a ledger row whose `finished_at` is PostgreSQL `infinity` or
+  `-infinity` with `migrations.ErrInvalidRecord`. The package never writes
+  such a value; it can only come from a direct ledger edit.
+- Move the module to `github.com/faustbrian/go-migrations/v5`. The ledger,
+  checksum framing, schema fingerprint and advisory lock key are unchanged, so
+  v4 and v5 runners serialize on the same lock and share history without
+  alignment. Multi-statement migration SQL still executes as one request over
+  the simple query protocol.
+
+### Migrating dependents
+
+- go-idempotency, go-lease, go-rate-limit, go-authorization and
+  go-queue-control-plane export go-migrations v4 types such as
+  `GoMigration() migrations.Migration` and `MigrationSource()
+  migrations.Source`, so each needs a new major that moves to v5. Release
+  go-migrations v5 first, then those libraries, then go-scheduler, then the
+  applications. Migration checksums are identical across v4 and v5, so
+  rebuilding a v4 migration with `NewMigration` from the same version, name,
+  mode and SQL yields the same identity and needs no ledger change. See the
+  [compatibility guide](docs/compatibility.md#migrating-dependents).
+
+### Compatibility notes
+
+- `github.com/lib/pq` remains in `go.sum` only because the test-only
+  testcontainers PostgreSQL module's own tests reference it. No package in
+  this module, including its tests, imports it, and `go.mod` does not require
+  it.
+
+### Removed
+
+- Remove the internal Goose execution adapter and the `pressly/goose`,
+  `database/sql` and `go-sqlmock` dependencies. Migration SQL runs directly on
+  the session's pgx transaction or lock connection with the same redacted
+  execution errors.
+
 ## 4.0.0 - 2026-10-22
 
 ### Removed

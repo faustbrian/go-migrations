@@ -3,7 +3,6 @@ package postgres
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -11,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrInvalidSchemaSnapshot indicates ambiguous catalog data that cannot form a
@@ -203,17 +203,19 @@ func Fingerprint(objects []SchemaObject) (migrations.Checksum, error) {
 // separate leased connection, without taking the migration advisory lock or
 // changing the ledger. It does not freeze concurrent DDL for a later Baseline.
 func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error) {
-	if backend == nil || backend.database == nil {
+	if backend == nil || backend.pool == nil {
 		return migrations.Checksum{}, ErrInvalidConfig
 	}
 
 	operationCtx, cancel := boundedOperationContext(ctx, backend.operationTimeout)
 	defer cancel()
-	connection, err := backend.database.Conn(operationCtx)
+	connection, err := backend.pool.acquire(operationCtx)
 	if err != nil {
 		return migrations.Checksum{}, databaseContextFailure(operationCtx, "acquire schema inspection connection", err)
 	}
-	defer func() { _ = connection.Close() }()
+	// Inspection sets no session state; pgxpool destroys a session that a
+	// canceled query left closed or busy instead of reusing it.
+	defer connection.release()
 
 	return inspectSchema(operationCtx, connection, backend.namespace)
 }
@@ -228,17 +230,17 @@ func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error
 // A matching fingerprint therefore does not certify the whole schema/security
 // state; review those omitted properties separately before adoption.
 func (backend *Backend) InspectObjects(ctx context.Context) ([]SchemaObject, error) {
-	if backend == nil || backend.database == nil {
+	if backend == nil || backend.pool == nil {
 		return nil, ErrInvalidConfig
 	}
 
 	operationCtx, cancel := boundedOperationContext(ctx, backend.operationTimeout)
 	defer cancel()
-	connection, err := backend.database.Conn(operationCtx)
+	connection, err := backend.pool.acquire(operationCtx)
 	if err != nil {
 		return nil, databaseContextFailure(operationCtx, "acquire schema inspection connection", err)
 	}
-	defer func() { _ = connection.Close() }()
+	defer connection.release()
 
 	return inspectObjects(operationCtx, connection, backend.namespace)
 }
@@ -256,11 +258,17 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 		return migrations.Record{}, ErrSessionReleased
 	}
 
-	transaction, err := session.connection.BeginTx(operationCtx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	transaction, err := session.connection.begin(operationCtx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(operationCtx, "begin baseline transaction", err)
 	}
-	defer func() { _ = transaction.Rollback() }()
+	defer func() {
+		// The baseline result does not report cleanup failures, but an
+		// uncertain rollback must still keep the session out of the pool.
+		if rollbackTransaction(operationCtx, transaction) != nil {
+			session.tainted = true
+		}
+	}()
 
 	fingerprint, err := inspectSchema(operationCtx, transaction, session.namespace)
 	if err != nil {
@@ -276,7 +284,7 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	}
 
 	appliedAt := time.Now().UTC()
-	_, err = transaction.ExecContext(
+	_, err = transaction.Exec(
 		operationCtx,
 		ledgerSQL(`INSERT INTO public.migrations (version, kind, name, checksum, started_at, finished_at, execution_time_ms, dirty, engine, engine_version) VALUES ($1, $2, $3, $4, $5, $5, 0, false, 'baseline', 'postgres-schema-v1')`, session.namespace),
 		baselineLedgerVersion(baseline),
@@ -288,7 +296,7 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	if err != nil {
 		return migrations.Record{}, databaseContextFailure(operationCtx, "insert schema baseline", err)
 	}
-	if err := transaction.Commit(); err != nil {
+	if err := transaction.Commit(operationCtx); err != nil {
 		return migrations.Record{}, databaseContextFailure(operationCtx, "commit schema baseline", err)
 	}
 
@@ -303,17 +311,13 @@ func (session *session) Baseline(ctx context.Context, baseline migrations.Baseli
 	)
 }
 
-type schemaQueryer interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}
-
 func baselineLedgerVersion(baseline migrations.Baseline) int64 {
 	// #nosec G115 -- Baseline has private fields and NewBaseline rejects
 	// versions above math.MaxInt64 before PostgreSQL persistence can receive one.
 	return int64(baseline.Version())
 }
 
-func inspectSchema(ctx context.Context, queryer schemaQueryer, namespace string) (migrations.Checksum, error) {
+func inspectSchema(ctx context.Context, queryer queryer, namespace string) (migrations.Checksum, error) {
 	objects, err := inspectObjects(ctx, queryer, namespace)
 	if err != nil {
 		return migrations.Checksum{}, err
@@ -322,12 +326,12 @@ func inspectSchema(ctx context.Context, queryer schemaQueryer, namespace string)
 	return Fingerprint(objects)
 }
 
-func inspectObjects(ctx context.Context, queryer schemaQueryer, namespace string) ([]SchemaObject, error) {
-	rows, err := queryer.QueryContext(ctx, schemaSQL(namespace))
+func inspectObjects(ctx context.Context, queryer queryer, namespace string) ([]SchemaObject, error) {
+	rows, err := queryer.Query(ctx, schemaSQL(namespace))
 	if err != nil {
 		return nil, databaseContextFailure(ctx, "inspect PostgreSQL schema", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	objects := make([]SchemaObject, 0, min(MaxSchemaObjects, 128))
 	totalBytes := 0

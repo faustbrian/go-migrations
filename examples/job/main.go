@@ -1,5 +1,5 @@
 // Command job runs embedded migrations as a dedicated deployment task with a
-// caller-owned database and immutable compiler-embedded source. It needs a
+// caller-owned pgx pool and immutable compiler-embedded source. It needs a
 // disposable/reviewed PostgreSQL target and DATABASE_URL; it is not run as a
 // package example. Deployment supervision, privilege review and recovery are
 // application obligations, not guarantees from a successful process exit.
@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -16,9 +15,9 @@ import (
 	"os"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed migrations/*.sql
@@ -35,18 +34,19 @@ func run(ctx context.Context) error {
 	if connectionString == "" {
 		return errors.New("DATABASE_URL is required")
 	}
-	database, err := sql.Open("pgx", connectionString)
+	// Each migration session leases one pooled connection for its lifetime.
+	pool, err := pgxpool.New(ctx, connectionString)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return fmt.Errorf("open database pool: %w", err)
 	}
-	defer func() { _ = database.Close() }()
+	defer pool.Close()
 
 	source, err := migrations.NewFSSource(embeddedSourceFileSystem{files: migrationFiles}, "migrations")
 	if err != nil {
 		return fmt.Errorf("create migration source: %w", err)
 	}
 	backend, err := postgres.New(
-		database,
+		pool,
 		postgres.WithLockTimeout(30*time.Second),
 		postgres.WithStatementTimeout(5*time.Minute),
 	)

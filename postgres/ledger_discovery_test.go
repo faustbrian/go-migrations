@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 // MIG-04: discovery must not acquire migration ownership or prepare a ledger.
@@ -17,7 +16,7 @@ import (
 // real PostgreSQL read-only enforcement is exercised by the integration lane.
 func TestReadLedgerDoesNotPrepareFreshDatabase(t *testing.T) {
 	db, mock := newMockDatabase(t)
-	backend, err := postgres.New(db)
+	backend, err := postgres.NewMockBackend(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +27,7 @@ func TestReadLedgerDoesNotPrepareFreshDatabase(t *testing.T) {
 		t.Fatal("native backend cannot discover ledger without preparation")
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT.*relkind").WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
+	mock.ExpectQuery("SELECT.*relkind").WillReturnRows(postgres.NewMockRows([]string{"relkind"}))
 	mock.ExpectRollback()
 	records, err := reader.ReadLedger(context.Background())
 	if err != nil || len(records) != 0 {
@@ -41,7 +40,7 @@ func TestReadLedgerFailuresAreBoundedRedactedAndReleaseTransactions(t *testing.T
 	for _, failure := range []string{"begin", "catalog", "records", "decode", "iterate", "rollback", "timeout"} {
 		t.Run(failure, func(t *testing.T) {
 			db, mock := newMockDatabase(t)
-			backend, err := postgres.New(db, postgres.WithOperationTimeout(10*time.Millisecond))
+			backend, err := postgres.NewMockBackend(db, postgres.WithOperationTimeout(10*time.Millisecond))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,14 +54,14 @@ func TestReadLedgerFailuresAreBoundedRedactedAndReleaseTransactions(t *testing.T
 				case "catalog":
 					catalog.WillReturnError(cause)
 				case "timeout":
-					catalog.WillDelayFor(time.Second).WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
+					catalog.WillDelayFor(time.Second).WillReturnRows(postgres.NewMockRows([]string{"relkind"}))
 				default:
-					catalog.WillReturnRows(sqlmock.NewRows([]string{"relkind"}).AddRow("r"))
+					catalog.WillReturnRows(postgres.NewMockRows([]string{"relkind"}).AddRow("r"))
 					history := mock.ExpectQuery("SELECT.*FROM public.migrations")
 					if failure == "records" {
 						history.WillReturnError(cause)
 					} else {
-						rows := sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"})
+						rows := postgres.NewMockRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"})
 						if failure == "decode" {
 							rows.AddRow("migration", 1, "owned", "invalid", time.Unix(1, 0).UTC(), nil, 0, true)
 						}
@@ -100,7 +99,7 @@ func TestReadLedgerRejectsInvalidOrCanceledOwnersBeforeIO(t *testing.T) {
 		t.Fatal("nil owner admitted")
 	}
 	db, mock := newMockDatabase(t)
-	backend, err := postgres.New(db)
+	backend, err := postgres.NewMockBackend(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +120,7 @@ func TestReadLedgerPreservesDirtyHistoryAndRejectsForeignRelation(t *testing.T) 
 	for _, kind := range []string{"r", "v"} {
 		t.Run(kind, func(t *testing.T) {
 			db, mock := newMockDatabase(t)
-			backend, err := postgres.New(db)
+			backend, err := postgres.NewMockBackend(db)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,9 +131,9 @@ func TestReadLedgerPreservesDirtyHistoryAndRejectsForeignRelation(t *testing.T) 
 				t.Fatal("native backend lacks read-only discovery")
 			}
 			mock.ExpectBegin()
-			mock.ExpectQuery("SELECT.*relkind").WillReturnRows(sqlmock.NewRows([]string{"relkind"}).AddRow(kind))
+			mock.ExpectQuery("SELECT.*relkind").WillReturnRows(postgres.NewMockRows([]string{"relkind"}).AddRow(kind))
 			if kind == "r" {
-				mock.ExpectQuery("SELECT.*FROM public.migrations").WillReturnRows(sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).AddRow("migration", 1, "owned_schema", migrations.ChecksumData([]byte("schema")).String(), time.Unix(1, 0).UTC(), nil, 0, true))
+				mock.ExpectQuery("SELECT.*FROM public.migrations").WillReturnRows(postgres.NewMockRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}).AddRow("migration", 1, "owned_schema", migrations.ChecksumData([]byte("schema")).String(), time.Unix(1, 0).UTC(), nil, 0, true))
 			}
 			mock.ExpectRollback()
 			records, err := reader.ReadLedger(context.Background())

@@ -2,10 +2,7 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +12,18 @@ func TestBackendDefaultLockTimeoutBoundsConnectionAcquisition(t *testing.T) {
 	t.Parallel()
 
 	deadlines := make(chan time.Time, 1)
-	database := sql.OpenDB(deadlineConnector{deadlines: deadlines})
-	t.Cleanup(func() { _ = database.Close() })
-	backend, err := New(database)
+	mock := NewMockConn()
+	mock.ExpectQuery("pg_try_advisory_lock").WillReturnRows(NewMockRows([]string{"acquired"}).AddRow(true))
+	mock.ExpectQuery("pg_advisory_unlock").WillReturnRows(NewMockRows([]string{"unlocked"}).AddRow(true))
+	database := &MockPool{Conn: mock, OnAcquire: func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("connection acquisition context has no deadline")
+		}
+		deadlines <- deadline
+		return nil
+	}}
+	backend, err := newBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -84,64 +90,6 @@ func TestAggregateTextBudgetAcceptsExactLimitAndRejectsNextByte(t *testing.T) {
 	}
 }
 
-type deadlineConnector struct {
-	deadlines chan<- time.Time
-}
-
-func (connector deadlineConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return nil, errors.New("connection acquisition context has no deadline")
-	}
-	connector.deadlines <- deadline
-
-	return deadlineConnection{}, nil
-}
-
-func (deadlineConnector) Driver() driver.Driver { return deadlineDriver{} }
-
-type deadlineDriver struct{}
-
-func (deadlineDriver) Open(string) (driver.Conn, error) { return deadlineConnection{}, nil }
-
-type deadlineConnection struct{}
-
-func (deadlineConnection) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("prepare is unsupported")
-}
-
-func (deadlineConnection) Close() error { return nil }
-
-func (deadlineConnection) Begin() (driver.Tx, error) {
-	return nil, errors.New("transactions are unsupported")
-}
-
-func (deadlineConnection) QueryContext(
-	context.Context,
-	string,
-	[]driver.NamedValue,
-) (driver.Rows, error) {
-	return &deadlineRows{}, nil
-}
-
-type deadlineRows struct {
-	read bool
-}
-
-func (*deadlineRows) Columns() []string { return []string{"acquired"} }
-
-func (*deadlineRows) Close() error { return nil }
-
-func (rows *deadlineRows) Next(values []driver.Value) error {
-	if rows.read {
-		return io.EOF
-	}
-	rows.read = true
-	values[0] = true
-
-	return nil
-}
-
 func TestBackendOptionsAreAppliedLeftToRightAndLastDuplicateWins(t *testing.T) {
 	events := make([]string, 0, 3)
 	option := func(name string, apply func(*Backend)) Option {
@@ -151,8 +99,8 @@ func TestBackendOptionsAreAppliedLeftToRightAndLastDuplicateWins(t *testing.T) {
 			return nil
 		}
 	}
-	database := &sql.DB{}
-	backend, err := New(database,
+	database := &MockPool{}
+	backend, err := newBackend(database,
 		option("first", func(backend *Backend) { backend.lockTimeout = time.Second }),
 		option("second", func(backend *Backend) { backend.statementTimeout = 2 * time.Second }),
 		option("third", func(backend *Backend) { backend.lockTimeout = 3 * time.Second }),
@@ -166,19 +114,19 @@ func TestBackendOptionsAreAppliedLeftToRightAndLastDuplicateWins(t *testing.T) {
 	if backend.lockTimeout != 3*time.Second || backend.statementTimeout != 2*time.Second {
 		t.Fatalf("duplicate precedence = %#v", backend)
 	}
-	if backend.database != database {
+	if backend.pool != database {
 		t.Fatal("New() replaced the caller-owned database")
 	}
 }
 
 func TestBackendOptionsRejectNilAndStopAtFirstErrorWithoutDatabaseWork(t *testing.T) {
-	database := &sql.DB{}
-	if _, err := New(database, nil); !errors.Is(err, ErrInvalidConfig) {
+	database := &MockPool{}
+	if _, err := newBackend(database, nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("New(nil option) error = %v", err)
 	}
 	want := errors.New("option failed")
 	events := make([]string, 0, 2)
-	_, err := New(database,
+	_, err := newBackend(database,
 		func(*Backend) error { events = append(events, "first"); return want },
 		func(*Backend) error { events = append(events, "later"); return nil },
 	)
@@ -188,7 +136,7 @@ func TestBackendOptionsRejectNilAndStopAtFirstErrorWithoutDatabaseWork(t *testin
 	if !sameStrings(events, []string{"first"}) {
 		t.Fatalf("option order = %v", events)
 	}
-	// An unopened zero-value sql.DB would panic if construction tried to acquire
+	// A MockPool without a script would panic if construction tried to acquire
 	// a connection. Reaching this assertion characterizes New as I/O-free.
 }
 

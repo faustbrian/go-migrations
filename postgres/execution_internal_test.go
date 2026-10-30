@@ -1,0 +1,237 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func TestMigrationSQLRunsOnTheCallerOwnedExecutor(t *testing.T) {
+	t.Parallel()
+
+	const statement = "CREATE TABLE users (id bigint); CREATE INDEX users_id ON users (id);"
+	mock := NewMockConn()
+	mock.ExpectExec(regexp.QuoteMeta(statement)).WithArgs().WillReturnResult(MockResult("CREATE INDEX", 0))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(statement)).WithArgs().WillReturnResult(MockResult("CREATE INDEX", 0))
+	mock.ExpectRollback()
+
+	if err := executeMigrationSQL(context.Background(), mock, statement); err != nil {
+		t.Fatalf("connection execution error = %v", err)
+	}
+	tx, err := mock.begin(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executeMigrationSQL(context.Background(), tx, statement); err != nil {
+		t.Fatalf("transaction execution error = %v", err)
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionRejectsZeroMigrationBeforeDatabaseWork(t *testing.T) {
+	t.Parallel()
+
+	session, mock := faultSession(t, 0)
+	if _, err := session.Apply(context.Background(), migrations.Migration{}); !errors.Is(err, migrations.ErrInvalidVersion) {
+		t.Fatalf("Apply(zero) error = %v, want ErrInvalidVersion", err)
+	}
+	if _, err := session.Rollback(context.Background(), migrations.Migration{}); !errors.Is(err, migrations.ErrInvalidVersion) {
+		t.Fatalf("Rollback(zero) error = %v, want ErrInvalidVersion", err)
+	}
+	assertFaultExpectations(t, mock)
+}
+
+func TestExecutionPreservesCancellationOnlyVersusIndependentFailure(t *testing.T) {
+	t.Parallel()
+
+	private := errors.New("private execution diagnostic")
+	cases := []struct {
+		name        string
+		cause       error
+		onlyContext bool
+	}{
+		{"canceled", context.Canceled, true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"wrapped cancellation", fmt.Errorf("private wrapper: %w", context.Canceled), true},
+		{"both context causes", errors.Join(context.Canceled, context.DeadlineExceeded), true},
+		{"canceled and failure", errors.Join(context.Canceled, private), false},
+		{"deadline and failure", errors.Join(context.DeadlineExceeded, private), false},
+		{"wrapped mixed causes", fmt.Errorf("private wrapper: %w", errors.Join(context.Canceled, private)), false},
+		{"ordinary failure", private, false},
+		{"custom cancellation with failure", classifiedDriverError{cause: private, target: context.Canceled}, false},
+		{"custom deadline with failure", classifiedDriverError{cause: private, target: context.DeadlineExceeded}, false},
+		{"custom cancellation with deadline", classifiedDriverError{cause: context.DeadlineExceeded, target: context.Canceled}, true},
+		{"custom cancellation leaf", classifiedDriverError{target: context.Canceled}, true},
+		{"custom cancellation with joined failures", classifiedJoinedDriverError{causes: []error{context.DeadlineExceeded, private}, target: context.Canceled}, false},
+		{"custom deadline with joined context", classifiedJoinedDriverError{causes: []error{context.Canceled}, target: context.DeadlineExceeded}, true},
+	}
+	for _, transactional := range []bool{false, true} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("transaction=%t/%s", transactional, tc.name), func(t *testing.T) {
+				t.Parallel()
+				const statement = "DROP TABLE private_payload;"
+				mock := NewMockConn()
+				var execer queryer = mock
+				if transactional {
+					mock.ExpectBegin()
+					tx, err := mock.begin(context.Background(), pgx.TxOptions{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					execer = tx
+				}
+				mock.ExpectExec(regexp.QuoteMeta(statement)).WillReturnError(tc.cause)
+				got := executeMigrationSQL(context.Background(), execer, statement)
+				if onlyContextCauses(got) != tc.onlyContext {
+					t.Errorf("context-only classification = %v, want %v", onlyContextCauses(got), tc.onlyContext)
+				}
+				for _, target := range []error{context.Canceled, context.DeadlineExceeded} {
+					if errors.Is(got, target) != errors.Is(tc.cause, target) {
+						t.Errorf("lost context classification %v", target)
+					}
+				}
+				if !errors.Is(got, migrations.ErrExecutionFailed) || errors.Is(got, private) {
+					t.Errorf("execution error = %v, want redacted ErrExecutionFailed", got)
+				}
+				for _, format := range []string{"%s", "%q", "%v", "%+v", "%#v"} {
+					if rendered := fmt.Sprintf(format, got); strings.Contains(rendered, "private") {
+						t.Errorf("format %s exposed private diagnostics: %s", format, rendered)
+					}
+				}
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+type classifiedDriverError struct {
+	cause  error
+	target error
+}
+
+func (classifiedDriverError) Error() string { return "private classified driver diagnostic" }
+
+func (err classifiedDriverError) Unwrap() error { return err.cause }
+
+func (err classifiedDriverError) Is(target error) bool { return target == err.target }
+
+type classifiedJoinedDriverError struct {
+	causes []error
+	target error
+}
+
+func (classifiedJoinedDriverError) Error() string { return "private joined driver diagnostic" }
+
+func (err classifiedJoinedDriverError) Unwrap() []error { return err.causes }
+
+func (err classifiedJoinedDriverError) Is(target error) bool { return target == err.target }
+
+// This consumer-style classifier visits every terminal cause; errors.Is alone
+// cannot distinguish cancellation from cancellation joined with a real failure.
+func onlyContextCauses(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !onlyContextCauses(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyContextCauses(cause)
+	}
+	return err == context.Canceled || err == context.DeadlineExceeded
+}
+
+// When cancellation made pgx close the session, the server already dropped its
+// statement_timeout and advisory lock. Cleanup must discard it quietly instead
+// of reporting the interruption again as reset or unlock failures.
+func TestClosedSessionCleanupAddsNoDatabaseFailure(t *testing.T) {
+	t.Parallel()
+
+	session, mock := faultSession(t, time.Second)
+	pool := session.connection.(*mockConnection).pool
+	pool.ConnClosed = true
+	migration := faultMigration(t, migrations.TransactionModeNone)
+	mock.ExpectExec("set_config").WillReturnResult(MockResult("SELECT", 1))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(MockResult("INSERT", 1))
+	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(fmt.Errorf("private interrupted statement: %w", context.DeadlineExceeded))
+	mock.ExpectClose()
+
+	_, err := session.Apply(context.Background(), migration)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, ErrDatabaseOperationFailed) {
+		t.Fatalf("Apply() error = %v, want pure redacted deadline", err)
+	}
+	if err := session.Release(context.Background()); err != nil {
+		t.Fatalf("Release(closed session) error = %v, want nil", err)
+	}
+	if pool.Discarded != 1 || pool.Released != 0 {
+		t.Fatalf("closed session discarded=%d released=%d, want one discard", pool.Discarded, pool.Released)
+	}
+	if err := session.Release(context.Background()); !errors.Is(err, ErrSessionReleased) {
+		t.Fatalf("second Release() error = %v, want ErrSessionReleased", err)
+	}
+	assertFaultExpectations(t, mock)
+}
+
+// PostgreSQL reports a cancel request as SQLSTATE 57014. When the caller's
+// context ended, that is the caller's cancellation; with a live context the
+// same code means statement_timeout and stays an execution failure.
+func TestCancelRequestReportsCallerCancellation(t *testing.T) {
+	t.Parallel()
+
+	const statement = "SELECT pg_sleep(10);"
+	canceled := &pgconn.PgError{Code: "57014", Message: "private canceling statement due to user request"}
+	for _, test := range []struct {
+		name    string
+		cancel  bool
+		context bool
+	}{
+		{name: "caller canceled", cancel: true, context: true},
+		{name: "statement timeout", cancel: false, context: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if test.cancel {
+				cancel()
+			}
+			mock := NewMockConn()
+			mock.ExpectExec(regexp.QuoteMeta(statement)).WillReturnError(canceled)
+			err := executeMigrationSQL(ctx, mock, statement)
+			if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, canceled) {
+				t.Fatalf("error = %v, want redacted execution failure", err)
+			}
+			if errors.Is(err, context.Canceled) != test.context || onlyContextCauses(err) != test.context {
+				t.Fatalf("error = %v, caller cancellation reported %t, want %t", err, errors.Is(err, context.Canceled), test.context)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", err), "private") {
+				t.Fatal("cancel-request error exposed driver diagnostics")
+			}
+		})
+	}
+}

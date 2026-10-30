@@ -2,14 +2,14 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	gooseadapter "github.com/faustbrian/go-migrations/v4/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const commandTableMarker = "golib/migrations/command/v1"
@@ -22,11 +22,11 @@ const createCommandTableSQL = `CREATE TABLE public.golib_migration_commands (
  completed integer NOT NULL CHECK(completed BETWEEN 0 AND 4096)
 ); COMMENT ON TABLE public.golib_migration_commands IS 'golib/migrations/command/v1'`
 
-func commandRelation(ctx context.Context, conn *sql.Conn) (bool, error) {
+func commandRelation(ctx context.Context, conn queryer) (bool, error) {
 	var kind string
-	var marker sql.NullString
-	err := conn.QueryRowContext(ctx, `SELECT c.relkind::text,pg_catalog.obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='golib_migration_commands'`).Scan(&kind, &marker)
-	if errors.Is(err, sql.ErrNoRows) {
+	var marker pgtype.Text
+	err := conn.QueryRow(ctx, `SELECT c.relkind::text,pg_catalog.obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='golib_migration_commands'`).Scan(&kind, &marker)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -38,19 +38,19 @@ func commandRelation(ctx context.Context, conn *sql.Conn) (bool, error) {
 	return true, nil
 }
 
-func readNativeCommand(ctx context.Context, conn *sql.Conn, id string) (commandStored, bool, error) {
+func readNativeCommand(ctx context.Context, conn queryer, id string) (commandStored, bool, error) {
 	exists, err := commandRelation(ctx, conn)
 	if err != nil || !exists {
 		return commandStored{}, false, err
 	}
 	var job, receipts, digest, keyDigest []byte
 	var completed int
-	err = conn.QueryRowContext(ctx, `SELECT CASE WHEN octet_length(request_digest)=32 THEN request_digest END,
+	err = conn.QueryRow(ctx, `SELECT CASE WHEN octet_length(request_digest)=32 THEN request_digest END,
  CASE WHEN octet_length(idempotency_digest)=32 THEN idempotency_digest END,
  CASE WHEN octet_length(job) BETWEEN 1 AND 16777216 THEN job END,
  CASE WHEN octet_length(receipts) BETWEEN 1 AND 16777216 THEN receipts END,completed
  FROM public.golib_migration_commands WHERE command_id=$1`, id).Scan(&digest, &keyDigest, &job, &receipts, &completed)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return commandStored{}, false, nil
 	}
 	if err != nil {
@@ -102,8 +102,8 @@ func (s *CommandSession) execute(ctx context.Context, input CommandRequest) (Com
 		return CommandProgress{}, err
 	} else if tableExists {
 		var keyOwner string
-		err := s.owned.connection.QueryRowContext(bounded, `SELECT command_id FROM public.golib_migration_commands WHERE idempotency_digest=$1`, req.IdempotencyDigest[:]).Scan(&keyOwner)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		err := s.owned.connection.QueryRow(bounded, `SELECT command_id FROM public.golib_migration_commands WHERE idempotency_digest=$1`, req.IdempotencyDigest[:]).Scan(&keyOwner)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return CommandProgress{}, databaseContextFailure(bounded, "read migration command key", err)
 		}
 		if err == nil && keyOwner != req.ID {
@@ -145,16 +145,13 @@ func (s *CommandSession) execute(ctx context.Context, input CommandRequest) (Com
 			}
 		}
 	}
-	// Compile before any durable bookkeeping, preserving native syntax/error
-	// ownership and preventing a late source defect from authorizing early work.
-	adapters := make([][]*gooseadapter.Adapter, len(req.Batches))
-	for i, b := range req.Batches {
+	// Validate before any durable bookkeeping so a late source defect cannot
+	// authorize early work.
+	for _, b := range req.Batches {
 		for _, m := range b.Migrations {
-			a, err := gooseadapter.Compile(m)
-			if err != nil {
+			if err := validMigration(m); err != nil {
 				return CommandProgress{}, err
 			}
-			adapters[i] = append(adapters[i], a)
 		}
 	}
 	if !exists {
@@ -166,7 +163,7 @@ func (s *CommandSession) execute(ctx context.Context, input CommandRequest) (Com
 		if err := bounded.Err(); err != nil {
 			return progress, err
 		}
-		next, err := s.applyCommandBatch(bounded, stored, req.Batches[i], adapters[i])
+		next, err := s.applyCommandBatch(bounded, stored, req.Batches[i])
 		if err != nil {
 			return progress, err
 		}
@@ -184,43 +181,43 @@ func (s *CommandSession) initializeCommand(ctx context.Context, stored commandSt
 	if err != nil {
 		return err
 	}
-	tx, err := s.owned.connection.BeginTx(ctx, nil)
+	tx, err := s.owned.connection.begin(ctx, pgx.TxOptions{})
 	if err != nil {
 		return databaseContextFailure(ctx, "begin migration command", err)
 	}
-	defer s.rollbackCommand(tx, &err)
+	defer s.rollbackCommand(ctx, tx, &err)
 	if err := setLocalStatementTimeout(ctx, tx, s.owned.statementTimeout); err != nil {
 		return err
 	}
 	if !exists {
-		if _, err := tx.ExecContext(ctx, createCommandTableSQL); err != nil {
+		if _, err := tx.Exec(ctx, createCommandTableSQL); err != nil {
 			return databaseContextFailure(ctx, "prepare migration commands", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO public.golib_migration_commands(command_id,request_digest,idempotency_digest,job,receipts,completed) VALUES($1,$2,$3,$4,$5,0)`, stored.job.ID, stored.identity[:], stored.job.IdempotencyDigest[:], job, []byte("null")); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO public.golib_migration_commands(command_id,request_digest,idempotency_digest,job,receipts,completed) VALUES($1,$2,$3,$4,$5,0)`, stored.job.ID, stored.identity[:], stored.job.IdempotencyDigest[:], job, []byte("null")); err != nil {
 		return databaseContextFailure(ctx, "reserve migration command", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		s.owned.tainted = true
 		return errors.Join(ErrCommandOutcomeUnknown, databaseContextFailure(ctx, "commit migration command", err))
 	}
 	return nil
 }
 
-func (s *CommandSession) applyCommandBatch(ctx context.Context, stored commandStored, b CommandBatch, adapters []*gooseadapter.Adapter) (resultState commandStored, err error) {
-	tx, err := s.owned.connection.BeginTx(ctx, nil)
+func (s *CommandSession) applyCommandBatch(ctx context.Context, stored commandStored, b CommandBatch) (resultState commandStored, err error) {
+	tx, err := s.owned.connection.begin(ctx, pgx.TxOptions{})
 	if err != nil {
 		return commandStored{}, databaseContextFailure(ctx, "begin migration command batch", err)
 	}
-	defer s.rollbackCommand(tx, &err)
+	defer s.rollbackCommand(ctx, tx, &err)
 	if err := setLocalStatementTimeout(ctx, tx, s.owned.statementTimeout); err != nil {
 		return commandStored{}, err
 	}
-	if _, err := tx.ExecContext(ctx, ledgerSQL(createLedgerSQL, b.Namespace)); err != nil {
+	if _, err := tx.Exec(ctx, ledgerSQL(createLedgerSQL, b.Namespace)); err != nil {
 		return commandStored{}, databaseContextFailure(ctx, "prepare command ledger", err)
 	}
 	if b.Preflight != "" {
-		if _, err := tx.ExecContext(ctx, b.Preflight); err != nil {
+		if _, err := tx.Exec(ctx, b.Preflight); err != nil {
 			return commandStored{}, databaseContextFailure(ctx, "execute command preflight", err)
 		}
 	}
@@ -228,12 +225,12 @@ func (s *CommandSession) applyCommandBatch(ctx context.Context, stored commandSt
 	// last acknowledged snapshot returned to the caller.
 	next := stored
 	next.receipts = slices.Clone(stored.receipts)
-	for i, m := range b.Migrations {
+	for _, m := range b.Migrations {
 		started := time.Now().UTC()
 		if err := insertDirty(ctx, tx, m, started, b.Namespace); err != nil {
 			return commandStored{}, err
 		}
-		if err := adapters[i].ApplyTx(ctx, tx); err != nil {
+		if err := executeMigrationSQL(ctx, tx, m.UpSQL()); err != nil {
 			return commandStored{}, err
 		}
 		finished := time.Now().UTC()
@@ -243,14 +240,17 @@ func (s *CommandSession) applyCommandBatch(ctx context.Context, stored commandSt
 	}
 	// Read the actual persisted precision rather than recording a higher-
 	// precision timestamp/duration that PostgreSQL cannot later reproduce.
-	rows, err := tx.QueryContext(ctx, ledgerSQL(ledgerRecordsSQL, b.Namespace))
+	rows, err := tx.Query(ctx, ledgerSQL(ledgerRecordsSQL, b.Namespace))
 	if err != nil {
 		return commandStored{}, databaseContextFailure(ctx, "read command checkpoint ledger", err)
 	}
 	records, readErr := decodeLedgerRows(ctx, rows)
-	closeErr := rows.Close()
-	if readErr != nil || closeErr != nil {
-		return commandStored{}, errors.Join(readErr, databaseFailure("close command ledger", closeErr))
+	rows.Close()
+	if readErr != nil {
+		return commandStored{}, readErr
+	}
+	if closeErr := rows.Err(); closeErr != nil {
+		return commandStored{}, databaseFailure("close command ledger", closeErr)
 	}
 	for _, m := range b.Migrations {
 		found := false
@@ -270,26 +270,22 @@ func (s *CommandSession) applyCommandBatch(ctx context.Context, stored commandSt
 	if err != nil || len(receipts) > maxCommandBytes {
 		return commandStored{}, ErrResourceLimit
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE public.golib_migration_commands SET receipts=$1,completed=$2 WHERE command_id=$3 AND request_digest=$4 AND completed=$5`, receipts, next.completed, stored.job.ID, stored.identity[:], stored.completed)
+	result, err := tx.Exec(ctx, `UPDATE public.golib_migration_commands SET receipts=$1,completed=$2 WHERE command_id=$3 AND request_digest=$4 AND completed=$5`, receipts, next.completed, stored.job.ID, stored.identity[:], stored.completed)
 	if err != nil {
 		return commandStored{}, databaseContextFailure(ctx, "checkpoint migration command", err)
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return commandStored{}, databaseFailure("read command checkpoint count", err)
-	}
-	if count != 1 {
+	if result.RowsAffected() != 1 {
 		return commandStored{}, ErrCommandConflict
 	}
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		s.owned.tainted = true
 		return commandStored{}, errors.Join(ErrCommandOutcomeUnknown, databaseContextFailure(ctx, "commit command batch", err))
 	}
 	return next, nil
 }
 
-func (s *CommandSession) rollbackCommand(tx *sql.Tx, result *error) {
-	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+func (s *CommandSession) rollbackCommand(ctx context.Context, tx transaction, result *error) {
+	if err := rollbackTransaction(ctx, tx); err != nil {
 		s.taint()
 		*result = errors.Join(*result, ErrCommandOutcomeUnknown, databaseFailure("rollback migration command", err))
 	}

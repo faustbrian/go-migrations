@@ -47,23 +47,27 @@ and revalidate complete history before retrying or recovering.
 Advisory-lock acquisition retains a query failure alongside concurrent caller
 cancellation. Transactional apply/down errors also retain meaningful explicit
 rollback failures; still call `Release` so an uncertain physical session is
-discarded. Already-completed transactions add no cleanup failure. Only errors
-returned by `database/sql` can be preserved: its internal automatic rollback
-does not surface its driver's cleanup error.
+discarded. Already-completed transactions add no cleanup failure, and neither
+does a session that pgx already closed after caller cancellation interrupted
+a statement: PostgreSQL ends that session, aborting its transaction and
+dropping its `statement_timeout` and advisory lock, so rollback, timeout
+restoration and `Release` discard it without reporting a cleanup failure.
+Unlock and restoration failures on a live connection are still reported.
 
-Go's standard `database/sql` commit, rollback, row-close, and connection-close
-APIs cannot accept a context once driver finalization or cleanup begins. Use a
-maintained driver with finite PostgreSQL server and network timeouts, supervise
-the migration process with a hard termination budget, and treat deadline
-expiry during finalization as uncertain until database and ledger state are
+pgx accepts a context for commit, rollback and connection close. Rollback and
+the close that discards an uncertain session run on a detached 30-second
+deadline, so caller cancellation cannot skip them and they cannot block
+forever. Keep finite PostgreSQL server and network timeouts, supervise the
+migration process with a hard termination budget, and treat deadline expiry
+during commit or cleanup as uncertain until database and ledger state are
 inspected.
 
 Ledger reads retain at most 4,097 records and 16 MiB of aggregate text. Schema
 inspection retains at most 10,000 objects, 4 KiB per identity, 1 MiB per
 definition, and 16 MiB of aggregate text. `ErrResourceLimit` identifies these
-fail-closed outcomes. A database driver can allocate the current field before
-the package validates it, so use a maintained driver and retain process memory
-limits.
+fail-closed outcomes. pgx reads the current field into memory before the
+package validates it, so connect only to trusted PostgreSQL endpoints and
+retain process memory limits.
 
 Source loading independently defaults to ten minutes and can be configured
 with a positive `WithSourceTimeout` override. Custom sources and backends must
@@ -101,7 +105,7 @@ upgrade or silently adopt existing state. `ErrInstallOutcomeUnknown` means
 commit or post-commit ownership release was uncertain: stop, reacquire native
 ownership and reconcile the exact original ledger/source before taking another
 action. Never infer rollback from a connection error or blindly replay setup.
-Driver finalization still has the supervision requirements described above.
+Commit and cleanup still have the supervision requirements described above.
 Ordinary `Runner.Up` keeps its per-migration transactions. This API alone does
 not provide a reference exact-plan/resume protocol.
 

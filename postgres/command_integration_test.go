@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
-	"github.com/jackc/pgx/v5/stdlib"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 func TestCommandAtomicPrefixAndNamespaces(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	db, _ := isolatedMigrationDatabase(t, ctx)
-	db.SetMaxOpenConns(1)
-	contenderDB := stdlib.OpenDB(*commandFixturePGXConfig(t, ctx, db))
-	t.Cleanup(func() { _ = contenderDB.Close() })
+	fixture, _ := isolatedMigrationDatabase(t, ctx)
+	// One connection proves every command operation stays on the session it
+	// leased; a second acquisition would wait for the operation timeout.
+	db := clonePool(t, ctx, fixture, 1)
+	contenderDB := clonePool(t, ctx, fixture, 0)
 	backend, err := postgres.New(db, postgres.WithOperationTimeout(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
@@ -90,10 +90,10 @@ func TestCommandAtomicPrefixAndNamespaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	var firstExists, secondExists bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.command_first') IS NOT NULL, to_regclass('public.command_second') IS NOT NULL").Scan(&firstExists, &secondExists); err != nil || !firstExists || secondExists {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.command_first') IS NOT NULL, to_regclass('public.command_second') IS NOT NULL").Scan(&firstExists, &secondExists); err != nil || !firstExists || secondExists {
 		t.Fatal("SQL effects did not match atomic prefix", err)
 	}
-	if _, err := db.ExecContext(ctx, "CREATE TABLE public.command_dependency(id int PRIMARY KEY); INSERT INTO public.command_dependency VALUES(1)"); err != nil {
+	if _, err := db.Exec(ctx, "CREATE TABLE public.command_dependency(id int PRIMARY KEY); INSERT INTO public.command_dependency VALUES(1)"); err != nil {
 		t.Fatal(err)
 	}
 	// Reconstruct both owner and command execution after the first call is gone.
@@ -142,14 +142,14 @@ func TestCommandFreshPreflightIsOneAtomicUnit(t *testing.T) {
 	defer cancel()
 	db, _ := isolatedMigrationDatabase(t, ctx)
 	var database string
-	if err := db.QueryRowContext(ctx, "SELECT current_database()").Scan(&database); err != nil {
+	if err := db.QueryRow(ctx, "SELECT current_database()").Scan(&database); err != nil {
 		t.Fatal(err)
 	}
 	role := database + "_command"
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), time.Second)
 		defer stop()
-		if _, err := db.ExecContext(cleanup, `DROP ROLE IF EXISTS "`+role+`"`); err != nil {
+		if _, err := db.Exec(cleanup, `DROP ROLE IF EXISTS "`+role+`"`); err != nil {
 			t.Error("fixture role cleanup", err)
 		}
 	})
@@ -182,7 +182,7 @@ func TestCommandFreshPreflightIsOneAtomicUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var untouched bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.fresh_command') IS NULL AND to_regclass('public.golib_migrations_fresh') IS NULL AND NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)", role).Scan(&untouched); err != nil || !untouched {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.fresh_command') IS NULL AND to_regclass('public.golib_migrations_fresh') IS NULL AND NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)", role).Scan(&untouched); err != nil || !untouched {
 		t.Fatal("fresh rollback retained preflight/schema/ledger", err)
 	}
 	second, err = migrations.NewMigration(2, "fresh_command_second", migrations.TransactionModeDefault, "CREATE INDEX fresh_command_id ON public.fresh_command(id)", "")
@@ -238,7 +238,7 @@ func TestCommandRejectsLateDriftBeforeAnyWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "CREATE VIEW public.golib_migrations_late AS SELECT 1 AS foreign_history"); err != nil {
+	if _, err := db.Exec(ctx, "CREATE VIEW public.golib_migrations_late AS SELECT 1 AS foreign_history"); err != nil {
 		t.Fatal(err)
 	}
 	owner, err := backend.AcquireCommand(ctx)
@@ -258,7 +258,7 @@ func TestCommandRejectsLateDriftBeforeAnyWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	var untouched bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.golib_migration_commands') IS NULL AND to_regclass('public.golib_migrations_early') IS NULL AND to_regclass('public.command_late') IS NULL").Scan(&untouched); err != nil || !untouched {
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.golib_migration_commands') IS NULL AND to_regclass('public.golib_migrations_early') IS NULL AND to_regclass('public.command_late') IS NULL").Scan(&untouched); err != nil || !untouched {
 		t.Fatal("late drift allowed early writes", err)
 	}
 }

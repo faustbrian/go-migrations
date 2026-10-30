@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	migrationsservice "github.com/faustbrian/go-migrations/v4/adapters/service"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	migrationsservice "github.com/faustbrian/go-migrations/v5/adapters/service"
 	service "github.com/faustbrian/go-service/v3"
 )
 

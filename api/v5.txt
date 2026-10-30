@@ -1,4 +1,4 @@
-package migrations // import "github.com/faustbrian/go-migrations/v4"
+package migrations // import "github.com/faustbrian/go-migrations/v5"
 
 Package migrations loads immutable SQL histories, validates checksum-bound
 ledger state, and coordinates plans, execution, baselines and dirty recovery.
@@ -340,7 +340,7 @@ func WithUnlockTimeout(timeout time.Duration) Option
     WithUnlockTimeout replaces the default 30-second, best-effort release
     deadline with a positive duration. Release uses context.WithoutCancel so
     caller cancellation does not skip its attempt. It cannot forcibly bound a
-    blocking observer, uncooperative backend or context-free driver finalizer.
+    blocking observer or a backend that ignores its context.
 
 type Phase uint8
     Phase identifies the lifecycle phase of an emitted operation.
@@ -696,7 +696,7 @@ type Version uint64
 func (version Version) String() string
     String returns unpadded decimal text without validating the version.
 
-package migrationsservice // import "github.com/faustbrian/go-migrations/v4/adapters/service"
+package migrationsservice // import "github.com/faustbrian/go-migrations/v5/adapters/service"
 
 Package migrationsservice adapts an explicit migrations.Runner to the standard
 Service v3 migrate command.
@@ -795,7 +795,7 @@ func (err *OptionsError) Unwrap() error
 type Prepare[C any] func(context.Context, service.BuildContext, C) (Execution, error)
     Prepare constructs only the resources needed by the migrate role.
 
-package conformance // import "github.com/faustbrian/go-migrations/v4/conformance"
+package conformance // import "github.com/faustbrian/go-migrations/v5/conformance"
 
 Package conformance provides the reusable behavioral test suite every
 migration backend must pass without depending on its execution engine. Run uses
@@ -838,19 +838,20 @@ type Harness struct {
     subtests. Exec is used only to remove reviewed partial effects before an
     explicit rolled-back recovery decision.
 
-package postgres // import "github.com/faustbrian/go-migrations/v4/postgres"
+package postgres // import "github.com/faustbrian/go-migrations/v5/postgres"
 
 Package postgres implements the public.migrations ledger and connection-bound
-advisory-lock backend for migrations.Runner. New borrows a caller-owned *sql.DB;
-it does not open, close or migrate the database at construction. Acquire owns
-one leased connection until Release. Cooperating jobs in the same database share
-a stable lock; unrelated schema writers are not excluded.
+advisory-lock backend for migrations.Runner. New borrows a caller-owned
+*pgxpool.Pool; it does not open, close or migrate the database at construction.
+Acquire owns one leased connection until Release. Cooperating jobs in the same
+database share a stable lock; unrelated schema writers are not excluded.
 
 Transactional SQL and ledger changes use one transaction per migration.
-Nontransactional execution persists dirty state first; unresolved dirty outcomes
-require explicit operator review/recovery. An error during commit or timeout
-cleanup can follow durable changes; inspect state before retrying. Finite
-contexts bound cooperative work, not context-free database/sql finalizers.
+Nontransactional execution persists dirty state first; unresolved dirty
+outcomes require explicit operator review/recovery. An error during commit or
+timeout cleanup can follow durable changes; inspect state before retrying.
+Finite contexts bound work; rollback and connection close use detached finite
+deadlines.
 
 Default PostgreSQL operation formatting hides driver diagnostics, but error
 traversal may expose the original cause. Schema inspection returns sensitive
@@ -939,13 +940,14 @@ type Backend struct {
 }
     Backend owns PostgreSQL preparation and creates connection-bound sessions.
 
-func New(database *sql.DB, options ...Option) (*Backend, error)
-    New constructs the backend without invoking database itself or taking its
+func New(pool *pgxpool.Pool, options ...Option) (*Backend, error)
+    New constructs the backend without using pool itself or taking its
     ownership. Caller options run left-to-right until a nil/failing option;
     repeated settings use the last value. Defaults are 30-second acquisition,
-    five-minute statement and ten-minute primary-operation timeouts. The caller
-    closes the database after all sessions finish and must not mutate options
-    during use.
+    five-minute statement and ten-minute primary-operation timeouts. Each
+    session leases one pool connection for its lifetime, so size the pool for
+    concurrent sessions plus inspection and discovery. The caller closes the
+    pool after all sessions finish and must not mutate options during use.
 
 func (backend *Backend) Acquire(ctx context.Context) (migrations.Session, error)
     Acquire waits for the stable package advisory lock on one physical
@@ -960,7 +962,7 @@ func (b *Backend) AcquireCommand(ctx context.Context) (*CommandSession, error)
 
 func (backend *Backend) ForNamespace(namespace string) (*Backend, error)
     ForNamespace derives an IO-free backend for one independent migration owner.
-    It borrows the same database and copies timeout policy without changing the
+    It borrows the same pool and copies timeout policy without changing the
     receiver. Namespace is canonical lowercase ASCII snake case, starts with a
     letter, and contains 1..46 bytes. Empty, uppercase, ambiguous or oversized
     names return ErrInvalidConfig; values are never normalized or truncated.
@@ -977,8 +979,8 @@ func (backend *Backend) ForNamespace(namespace string) (*Backend, error)
     only this ledger's objects are excluded; nonselected ledgers remain visible.
     All owners retain the same native advisory lock so schema mutation stays
     serialized. Derived backends are safe for concurrent use with immutable
-    configuration; the caller retains database ownership. Nil/zero receivers
-    deny without IO.
+    configuration; the caller retains pool ownership. Nil/zero receivers deny
+    without IO.
 
 func (backend *Backend) Inspect(ctx context.Context) (migrations.Checksum, error)
     Inspect returns a fingerprint of the package-selected catalog query using
@@ -1013,7 +1015,7 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 
     The stable native advisory lock covers discovery, execution and
     finalization. Work and lock acquisition are bounded by backend
-    policy/context; independent cleanup uses a finite deadline. The database is
+    policy/context; independent cleanup uses a finite deadline. The pool is
     borrowed and stays open. Error formatting redacts SQL/driver diagnostics,
     but traversal may expose underlying driver causes; do not log
     unwrapped diagnostics. A commit or post-commit unlock failure returns
@@ -1030,9 +1032,9 @@ func (backend *Backend) ReadLedger(ctx context.Context) (records []migrations.Re
 
     Discovery uses one bounded repeatable-read, read-only transaction and the
     same row validation and resource limits as Session.Records. Returned records
-    are caller-owned; dirty records remain dirty. The borrowed database stays
-    open. Error formatting is redacted; errors.Is preserves classification and
-    error traversal may expose driver causes. Do not log unwrapped diagnostics.
+    are caller-owned; dirty records remain dirty. The borrowed pool stays open.
+    Error formatting is redacted; errors.Is preserves classification and error
+    traversal may expose driver causes. Do not log unwrapped diagnostics.
     Concurrent calls are safe. Nil/canceled contexts deny before database IO.
 
     The result is a snapshot, not migration ownership or permission to apply.
@@ -1209,8 +1211,7 @@ type CommandSession struct {
 }
     CommandSession retains one native global ownership interval and physical
     connection across independent namespaces. Methods serialize with Release;
-    each has a bounded context. Release is required; the database stays
-    borrowed.
+    each has a bounded context. Release is required; the pool stays borrowed.
 
 func (s *CommandSession) CatalogPresence(ctx context.Context, objects []CatalogIdentity) ([]bool, error)
     CatalogPresence reads 1..4096 exact identities in one statement through the
@@ -1237,7 +1238,7 @@ func (s *CommandSession) ReadProgress(ctx context.Context, id string) (CommandPr
 
 func (s *CommandSession) Release(ctx context.Context) error
     Release releases/discards the native connection; use a finite independent
-    cleanup context after cancellation. It does not close the borrowed database.
+    cleanup context after cancellation. It does not close the borrowed pool.
 
 type LedgerSnapshot struct {
 	// Namespace identifies the physical ledger from the original command.

@@ -2,15 +2,19 @@
 
 [Documentation index](README.md) · [Repository entry](../README.md)
 
-**Model version:** 1.4
+**Model version:** 1.5
 
-**Applies to:** `github.com/faustbrian/go-migrations/v4` source. The v4 review
-found no new asset or trust boundary: the removed `migrationsservice` facade
-and Service v1 binding were alternative bindings of the retained adapter, the
-direct go-service v1 and go-correlation dependencies are gone, and the ledger,
-lock and SQL execution paths are unchanged apart from import paths.
+**Applies to:** `github.com/faustbrian/go-migrations/v5` source. V5 replaces
+the `database/sql` boundary and the internal Goose execution adapter with pgx
+v5 directly: the backend borrows a `*pgxpool.Pool`, leases one connection per
+session and executes migration SQL with pgx on that session. The PostgreSQL
+driver trust boundary is unchanged in kind (pgx was already the driver behind
+`database/sql`); the ledger, lock key and SQL texts are unchanged. Rollback
+and session discard now take a detached finite context, which narrows
+MIGRATIONS-RISK-007. The v4 review found no new asset or trust boundary for
+the removed `migrationsservice` facade and Service v1 binding.
 
-**Reviewed:** 2026-10-22
+**Reviewed:** 2026-10-29
 
 **Owner:** `go-migrations` maintainers
 
@@ -49,7 +53,7 @@ checks; application deployment and adoption remain separate boundaries.
 | Locking and lifecycle | Competing jobs, cancellation, connection loss, and cleanup failure | Connection-bound advisory lock, post-lock revalidation, finite acquisition and release timeouts |
 | Baseline and recovery | Reviewed fingerprints, dirty outcomes, and operator decisions | Serializable baseline transaction, checksum-bound recovery, explicit failure on ambiguity |
 | Observability | Operation, phase, version, duration, and failures | Structured events without SQL; observer panics are contained |
-| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, go-doc API baseline, reviewed v4 release metadata |
+| Build and release | Dependencies, actions, generated API evidence, tags, and maintainer credentials | Shared pinned security gates, go-doc API baseline, reviewed v5 release metadata |
 
 Migration files and explicit `Migration` values are trusted deployment
 artifacts with the privileges of the supplied database role. Filesystem
@@ -59,8 +63,8 @@ observers are separate caller-owned trust boundaries.
 ## Controls
 
 - A failed advisory-lock acquisition or unlock leaves server lock ownership
-  uncertain. The dedicated physical connection is discarded through
-  `database/sql` rather than returned to its pool. Definite contention and
+  uncertain. The dedicated physical connection is removed from the pgx pool
+  and closed rather than returned to it. Definite contention and
   successful unlock retain ordinary healthy pooling. Nontransactional rollback
   rejects an unrepresentable stored duration in the atomic ledger update's
   predicate, before a clean row becomes dirty or down SQL executes.
@@ -114,9 +118,9 @@ observers are separate caller-owned trust boundaries.
 
 ## Open release-blocking findings
 
-No known unowned Critical or High finding remains in the reviewed v4 source.
-The context-free standard-library transaction and cleanup boundary is owned as
-MIGRATIONS-RISK-007; synchronous observer work is owned as MIGRATIONS-RISK-008.
+No known unowned Critical or High finding remains in the reviewed v5 source.
+Driver blocking during commit and cleanup is owned as MIGRATIONS-RISK-007;
+synchronous observer work is owned as MIGRATIONS-RISK-008.
 V2.0.0 is published. The v1-to-v2 application adoption boundary is recorded in
 compatibility guidance and is not implied by publication.
 
@@ -128,8 +132,8 @@ compatibility guidance and is not implied by publication.
 | MIGRATIONS-RISK-002 | A no-transaction statement can leave partial database effects when it fails or the process dies. | `go-migrations` maintainers and deploying operators | PostgreSQL requires no-transaction mode for operations such as concurrent index creation; those effects cannot be rolled back atomically with the ledger. | Persist dirty state first, keep each direction to one command, stop deployment, inspect the catalog, and use checksum-bound recovery only after proving the outcome. | Reassess when PostgreSQL adds transactional support, the dirty-state protocol changes, or a partial-effect recovery fails. |
 | MIGRATIONS-RISK-003 | Explicit `errors.Is` or `errors.As` inspection of a PostgreSQL operation error can reach the original driver error, which may contain database diagnostics. | Deploying application owners | Driver classifications are needed for controlled diagnosis and retry decisions, while ordinary formatting remains redacted. | Never serialize or log the unwrapped cause by default; restrict diagnostic access and retention; migration SQL execution causes are discarded entirely except for context classification. | Reassess when adding a driver, observability adapter, automatic retry, or public error serialization, or after diagnostic disclosure. |
 | MIGRATIONS-RISK-004 | Administrators, other frameworks, or a compromised PostgreSQL server can mutate schema outside the package advisory lock. | Deploying application owners | The advisory lock coordinates this package's jobs but cannot authorize or serialize unrelated database actors. | Restrict database access, isolate deployment windows, compare schema fingerprints, audit DDL, and restore schema and ledger from one consistent backup. | Reassess when another migration system shares the database, database privileges change, or unexplained schema drift occurs. |
-| MIGRATIONS-RISK-006 | A database driver may allocate one hostile ledger or catalog field before the package can enforce its per-field and aggregate retention budgets. | Deploying application owners | `database/sql` transfers the current field before package code can validate its length; rejecting standard drivers would remove the supported database boundary. | Use a maintained driver, a trusted PostgreSQL endpoint, role and transport controls, server-side statement limits, and process memory limits. The package validates each scanned row before appending it and bounds primary operation work. | Reassess when adding a driver, accepting an untrusted database endpoint, after database-response memory exhaustion, or if `database/sql` adds bounded field reads. |
-| MIGRATIONS-RISK-007 | A PostgreSQL driver can block inside transaction commit, rollback, row close, or connection close after the surrounding context expires. | `go-migrations` maintainers and deploying operators | Go's standard `database/sql` commit, rollback, and cleanup APIs do not accept a context once driver cleanup begins; replacing the portable database boundary with driver-specific internals would weaken compatibility. | Use a maintained context-aware driver and finite PostgreSQL server and network timeouts, run migrations in a supervised process with a hard termination budget, and treat deadline expiry during transaction finalization as an uncertain outcome requiring database and ledger inspection before retry. | Reassess when `database/sql` adds context-aware finalization, supported drivers expose a portable bounded transaction API, a driver or network timeout fails to terminate cleanup, or an operation remains stuck past its supervisor budget. |
+| MIGRATIONS-RISK-006 | pgx may allocate one hostile ledger or catalog field before the package can enforce its per-field and aggregate retention budgets. | Deploying application owners | pgx reads each protocol message, including the current field, before package code can validate its length; bounding it would require replacing pgx's wire decoding. | Use a trusted PostgreSQL endpoint, role and transport controls, server-side statement limits, and process memory limits. The package validates each scanned row before appending it and bounds primary operation work. | Reassess when changing the pgx major, accepting an untrusted database endpoint, after database-response memory exhaustion, or if pgx adds bounded field reads. |
+| MIGRATIONS-RISK-007 | Transaction commit, rollback or connection close can stall on an unresponsive network or server, and an interrupted commit has an unknown outcome. | `go-migrations` maintainers and deploying operators | pgx bounds these calls with a context: commit uses the operation context, while rollback and session discard use a detached 30-second deadline so cancellation cannot skip them. A deadline cannot reveal whether the server committed. | Keep finite PostgreSQL server and network timeouts, run migrations in a supervised process with a hard termination budget, and treat deadline expiry during commit or cleanup as an uncertain outcome requiring database and ledger inspection before retry. | Reassess when changing the pgx major or the cleanup deadline, if a network timeout fails to terminate cleanup, or an operation remains stuck past its supervisor budget. |
 | MIGRATIONS-RISK-008 | A trusted synchronous observer that blocks can delay operation return and advisory-lock release, including after caller cancellation. | Deploying application owners | The runner owns no observer goroutine and cannot safely preempt caller code; synchronous callbacks retain explicit caller ownership. | Keep callbacks bounded and nonblocking, honor their supplied context, apply an independent finite bound to detached cleanup events, and hand off slow exports through an application-owned bounded nonblocking queue. Supervise the migration process with a hard deadline. | Reassess when adding or changing an observer/exporter, if a callback exceeds its work budget, or when callback execution or cancellation ownership changes. |
 
 No accepted risk permits credentials, connection strings, migration SQL, raw
@@ -138,7 +142,7 @@ ledger values, or schema definitions in default diagnostics.
 ## Change and release review
 
 Review this model whenever parsing, checksums, SQL execution, timeouts,
-transactions, locking, ledger schema, baselines, recovery, driver behavior,
+transactions, locking, ledger schema, baselines, recovery, pgx behavior,
 diagnostics, dependencies, or release automation changes. A release is blocked
 by any open Critical or High finding, an unbounded attacker-controlled path,
 loss of dirty-state recovery, loss of v1 compatibility evidence, or a default

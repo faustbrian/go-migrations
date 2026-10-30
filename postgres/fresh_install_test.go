@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
 )
 
 type freshInstaller interface {
@@ -18,7 +17,7 @@ type freshInstaller interface {
 
 func TestInstallFreshRejectsInvalidInputWithoutIO(t *testing.T) {
 	db, mock := newMockDatabase(t)
-	backend, _ := postgres.New(db)
+	backend, _ := postgres.NewMockBackend(db)
 	first, _ := migrations.NewMigration(1, "first", migrations.TransactionModeDefault, "SELECT 1", "")
 	nontransactional, _ := migrations.NewMigration(2, "second", migrations.TransactionModeNone, "SELECT 2", "")
 	for _, tc := range []struct {
@@ -63,13 +62,13 @@ func TestInstallFreshCommitAndReleaseFailuresRemainUnknown(t *testing.T) {
 	for _, failure := range []string{"", "commit", "unlock", "preflight", "existing"} {
 		t.Run(failure, func(t *testing.T) {
 			db, mock := newMockDatabase(t)
-			backend, _ := postgres.New(db)
+			backend, _ := postgres.NewMockBackend(db)
 			step, _ := migrations.NewMigration(1, "owned", migrations.TransactionModeDefault, "SELECT 1", "")
-			mock.ExpectQuery("SELECT pg_try_advisory_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+			mock.ExpectQuery("SELECT pg_try_advisory_lock").WillReturnRows(postgres.NewMockRows([]string{"locked"}).AddRow(true))
 			mock.ExpectBegin()
-			mock.ExpectExec("SELECT set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnResult(sqlmock.NewResult(0, 0))
-			rows := sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"})
+			mock.ExpectExec("SELECT set_config").WillReturnResult(postgres.MockResult("SELECT", 1))
+			mock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnResult(postgres.MockResult("SELECT", 0))
+			rows := postgres.NewMockRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"})
 			if failure == "existing" {
 				rows.AddRow("migration", 1, step.Name(), step.Checksum().String(), time.Unix(1, 0), time.Unix(2, 0), 1000, false)
 			}
@@ -80,10 +79,10 @@ func TestInstallFreshCommitAndReleaseFailuresRemainUnknown(t *testing.T) {
 				if failure == "preflight" {
 					setup.WillReturnError(cause)
 				} else {
-					setup.WillReturnResult(sqlmock.NewResult(0, 1))
-					mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
-					mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(0, 1))
-					mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+					setup.WillReturnResult(postgres.MockResult("SELECT", 1))
+					mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
+					mock.ExpectExec("SELECT 1").WillReturnResult(postgres.MockResult("SELECT", 1))
+					mock.ExpectExec("UPDATE public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 				}
 			}
 			if failure == "existing" || failure == "preflight" {
@@ -98,7 +97,7 @@ func TestInstallFreshCommitAndReleaseFailuresRemainUnknown(t *testing.T) {
 			if failure == "unlock" {
 				unlock.WillReturnError(cause)
 			} else {
-				unlock.WillReturnRows(sqlmock.NewRows([]string{"unlocked"}).AddRow(true))
+				unlock.WillReturnRows(postgres.NewMockRows([]string{"unlocked"}).AddRow(true))
 			}
 			records, err := backend.InstallFresh(context.Background(), []migrations.Migration{step}, "SELECT 42")
 			if failure == "" {
@@ -125,7 +124,7 @@ func TestInstallFreshCommitAndReleaseFailuresRemainUnknown(t *testing.T) {
 // rather than leaving the preflight and first migration committed.
 func TestInstallFreshRollsBackCompleteInstallation(t *testing.T) {
 	db, mock := newMockDatabase(t)
-	backend, err := postgres.New(db)
+	backend, err := postgres.NewMockBackend(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,19 +134,19 @@ func TestInstallFreshRollsBackCompleteInstallation(t *testing.T) {
 	}
 	first, _ := migrations.NewMigration(1, "first", migrations.TransactionModeDefault, "SELECT 1", "")
 	second, _ := migrations.NewMigration(2, "second", migrations.TransactionModeDefault, "SELECT 2", "")
-	mock.ExpectQuery("SELECT pg_try_advisory_lock").WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_try_advisory_lock").WithArgs(postgres.MockAnyArg()).WillReturnRows(postgres.NewMockRows([]string{"locked"}).AddRow(true))
 	mock.ExpectBegin()
-	mock.ExpectExec("SELECT set_config").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT.*FROM public.migrations").WillReturnRows(sqlmock.NewRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}))
-	mock.ExpectExec("SELECT 42").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("SELECT 1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SELECT set_config").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnResult(postgres.MockResult("SELECT", 0))
+	mock.ExpectQuery("SELECT.*FROM public.migrations").WillReturnRows(postgres.NewMockRows([]string{"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty"}))
+	mock.ExpectExec("SELECT 42").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("SELECT 1").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectExec("SELECT 2").WillReturnError(errors.New("private SQL diagnostic"))
 	mock.ExpectRollback()
-	mock.ExpectQuery("SELECT pg_advisory_unlock").WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"unlocked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_advisory_unlock").WithArgs(postgres.MockAnyArg()).WillReturnRows(postgres.NewMockRows([]string{"unlocked"}).AddRow(true))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	records, err := installer.InstallFresh(ctx, []migrations.Migration{first, second}, "SELECT 42")

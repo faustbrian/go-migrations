@@ -2,7 +2,6 @@ package postgres_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"regexp"
 	"strconv"
@@ -10,28 +9,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/postgres"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database)
+	backend, err := postgres.NewMockBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
 	mock.ExpectExec("^" + regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 
 	if err := session.Prepare(context.Background()); err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -43,20 +42,20 @@ func TestSessionOperationTimeoutCancelsLedgerPreparation(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database, postgres.WithOperationTimeout(time.Millisecond))
+	backend, err := postgres.NewMockBackend(database, postgres.WithOperationTimeout(time.Millisecond))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
 	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
-		WillDelayFor(time.Second).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("CREATE TABLE", 0)).
+		WillDelayFor(time.Second)
 
 	startedAt := time.Now()
 	if err := session.Prepare(context.Background()); !errors.Is(err, postgres.ErrDatabaseOperationFailed) || !errors.Is(err, context.DeadlineExceeded) {
@@ -72,7 +71,7 @@ func TestBackendSessionSerializesWorkWithAdvisoryLock(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(
+	backend, err := postgres.NewMockBackend(
 		database,
 		postgres.WithLockRetryInterval(time.Microsecond),
 	)
@@ -81,13 +80,13 @@ func TestBackendSessionSerializesWorkWithAdvisoryLock(t *testing.T) {
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
 		WithArgs(publishedLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(false))
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
 		WithArgs(publishedLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).
 		WithArgs(publishedLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_advisory_unlock"}).AddRow(true))
+		WillReturnRows(postgres.NewMockRows([]string{"pg_advisory_unlock"}).AddRow(true))
 
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
@@ -103,7 +102,7 @@ func TestBackendLockTimeoutCancelsPollingWithoutAcquiring(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(
+	backend, err := postgres.NewMockBackend(
 		database,
 		postgres.WithLockRetryInterval(time.Second),
 		postgres.WithLockTimeout(time.Millisecond),
@@ -112,8 +111,8 @@ func TestBackendLockTimeoutCancelsPollingWithoutAcquiring(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(false))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(false))
 
 	_, err = backend.Acquire(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -132,21 +131,21 @@ func TestSessionAppliesTransactionalMigrationAtomically(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
 		WithArgs("300000ms").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 	mock.ExpectExec("INSERT INTO public.migrations.*'postgres'.*'v1'").
 		WithArgs(
 			int64(1),
 			"migration",
 			"create_users",
 			migration.Checksum().String(),
-			sqlmock.AnyArg(),
+			postgres.MockAnyArg(),
 		).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 	mock.ExpectExec("UPDATE public.migrations").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1), migration.Checksum().String()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WithArgs(postgres.MockAnyArg(), postgres.MockAnyArg(), int64(1), migration.Checksum().String()).
+		WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectCommit()
 
 	record, err := session.Apply(context.Background(), migration)
@@ -163,13 +162,13 @@ func TestSessionSetsTransactionLocalStatementTimeout(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database, postgres.WithStatementTimeout(250*time.Millisecond))
+	backend, err := postgres.NewMockBackend(database, postgres.WithStatementTimeout(250*time.Millisecond))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -178,10 +177,10 @@ func TestSessionSetsTransactionLocalStatementTimeout(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
 		WithArgs("250ms").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(postgres.MockResult("SELECT", 0))
+	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectCommit()
 
 	if _, err := session.Apply(context.Background(), migration); err != nil {
@@ -194,13 +193,13 @@ func TestSessionAppliesDefaultStatementTimeout(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database)
+	backend, err := postgres.NewMockBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -209,10 +208,10 @@ func TestSessionAppliesDefaultStatementTimeout(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
 		WithArgs("300000ms").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnResult(postgres.MockResult("SELECT", 0))
+	mock.ExpectExec("UPDATE public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectCommit()
 
 	if _, err := session.Apply(context.Background(), migration); err != nil {
@@ -231,19 +230,19 @@ func TestSessionLeavesNoTransactionMigrationDirtyAfterFailure(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, false)")).
 		WithArgs("300000ms").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 	mock.ExpectExec("INSERT INTO public.migrations").
 		WithArgs(
 			int64(1),
 			"migration",
 			"create_users",
 			migration.Checksum().String(),
-			sqlmock.AnyArg(),
+			postgres.MockAnyArg(),
 		).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(executionError)
 	mock.ExpectExec(regexp.QuoteMeta("RESET statement_timeout")).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 
 	_, err := session.Apply(context.Background(), migration)
 	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, executionError) {
@@ -262,13 +261,13 @@ func TestNoTransactionStatementTimeoutRestoresDatabasePolicyAfterFailure(t *test
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database, postgres.WithStatementTimeout(250*time.Millisecond))
+	backend, err := postgres.NewMockBackend(database, postgres.WithStatementTimeout(250*time.Millisecond))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -277,11 +276,11 @@ func TestNoTransactionStatementTimeoutRestoresDatabasePolicyAfterFailure(t *test
 	executionError := errors.New("statement timeout")
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, false)")).
 		WithArgs("250ms").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 1))
+	mock.ExpectExec("INSERT INTO public.migrations").WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectExec(regexp.QuoteMeta(migration.UpSQL())).WillReturnError(executionError)
 	mock.ExpectExec(regexp.QuoteMeta("RESET statement_timeout")).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 1))
 
 	_, err = session.Apply(context.Background(), migration)
 	if !errors.Is(err, migrations.ErrExecutionFailed) || errors.Is(err, executionError) {
@@ -301,12 +300,12 @@ func TestSessionRollsBackTransactionalMigrationAtomically(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('statement_timeout', $1, true)")).
 		WithArgs("300000ms").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 	mock.ExpectExec(regexp.QuoteMeta(migration.DownSQL())).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnResult(postgres.MockResult("SELECT", 0))
 	mock.ExpectQuery("DELETE FROM public.migrations").
 		WithArgs(int64(1), migration.Checksum().String()).
-		WillReturnRows(sqlmock.NewRows([]string{
+		WillReturnRows(postgres.NewMockRows([]string{
 			"finished_at",
 			"execution_time_ms",
 		}).AddRow(finishedAt, int64(12)))
@@ -331,7 +330,7 @@ func TestSessionRejectsMalformedLedgerRows(t *testing.T) {
 	database, mock := newMockDatabase(t)
 	session := acquireSession(t, database, mock)
 	mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(
-		sqlmock.NewRows([]string{
+		postgres.NewMockRows([]string{
 			"kind",
 			"version",
 			"name",
@@ -364,7 +363,7 @@ func TestSessionRejectsLedgerBeyondResourceLimits(t *testing.T) {
 
 	database, mock := newMockDatabase(t)
 	session := acquireSession(t, database, mock)
-	rows := sqlmock.NewRows([]string{
+	rows := postgres.NewMockRows([]string{
 		"kind", "version", "name", "checksum", "started_at", "finished_at", "execution_time_ms", "dirty",
 	})
 	appliedAt := time.Now().UTC()
@@ -384,11 +383,11 @@ func TestSchemaInspectionRejectsCatalogBeyondResourceLimits(t *testing.T) {
 	t.Parallel()
 
 	database, mock := newMockDatabase(t)
-	backend, err := postgres.New(database)
+	backend, err := postgres.NewMockBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	rows := sqlmock.NewRows([]string{"object_identity", "definition"})
+	rows := postgres.NewMockRows([]string{"object_identity", "definition"})
 	for index := 0; index <= postgres.MaxSchemaObjects; index++ {
 		rows.AddRow("table:object_"+strconv.Itoa(index), "definition")
 	}
@@ -428,7 +427,7 @@ func TestSessionRejectsInconsistentLedgerCompletionState(t *testing.T) {
 			session := acquireSession(t, database, mock)
 			migration := newMigration(t, migrations.TransactionModeDefault)
 			mock.ExpectQuery("SELECT (.+) FROM public.migrations").WillReturnRows(
-				sqlmock.NewRows([]string{
+				postgres.NewMockRows([]string{
 					"kind",
 					"version",
 					"name",
@@ -500,7 +499,7 @@ func TestSessionRecordsBaselineOnlyAfterExactSchemaMatch(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT object_identity, definition FROM schema_objects").
-		WillReturnRows(sqlmock.NewRows([]string{"object_identity", "definition"}).
+		WillReturnRows(postgres.NewMockRows([]string{"object_identity", "definition"}).
 			AddRow(objects[0].Identity, objects[0].Definition).
 			AddRow(objects[1].Identity, objects[1].Definition))
 	mock.ExpectExec("INSERT INTO public.migrations").
@@ -509,9 +508,9 @@ func TestSessionRecordsBaselineOnlyAfterExactSchemaMatch(t *testing.T) {
 			"baseline",
 			"laravel_production_v1",
 			fingerprint.String(),
-			sqlmock.AnyArg(),
+			postgres.MockAnyArg(),
 		).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnResult(postgres.MockResult("SELECT", 1))
 	mock.ExpectCommit()
 
 	record, err := capable.Baseline(context.Background(), baseline)
@@ -537,8 +536,8 @@ func TestSessionResolvesDirtyMigrationWithoutManualLedgerEdit(t *testing.T) {
 		t.Fatal("PostgreSQL session does not implement recovery contract")
 	}
 	mock.ExpectQuery("UPDATE public.migrations").
-		WithArgs(sqlmock.AnyArg(), int64(1), migration.Checksum().String(), int64(9223372036854)).
-		WillReturnRows(sqlmock.NewRows([]string{"execution_time_ms"}).AddRow(int64(1000)))
+		WithArgs(postgres.MockAnyArg(), int64(1), migration.Checksum().String(), int64(9223372036854)).
+		WillReturnRows(postgres.NewMockRows([]string{"execution_time_ms"}).AddRow(int64(1000)))
 
 	record, err := capable.Recover(
 		context.Background(),
@@ -563,43 +562,43 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	if _, err := postgres.New(nil); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(nil) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithLockTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithLockTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(lock timeout) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithStatementTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(statement timeout) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithStatementTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(sub-millisecond statement timeout) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithStatementTimeout(time.Millisecond)); err != nil {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithStatementTimeout(time.Millisecond)); err != nil {
 		t.Fatalf("New(minimum statement timeout) error = %v", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithOperationTimeout(0)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(operation timeout) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithOperationTimeout(time.Nanosecond)); !errors.Is(err, postgres.ErrInvalidConfig) {
 		t.Fatalf("New(sub-millisecond operation timeout) error = %v, want ErrInvalidConfig", err)
 	}
-	if _, err := postgres.New(&sql.DB{}, postgres.WithOperationTimeout(time.Millisecond)); err != nil {
+	if _, err := postgres.New(unconnectedPool(t), postgres.WithOperationTimeout(time.Millisecond)); err != nil {
 		t.Fatalf("New(minimum operation timeout) error = %v", err)
 	}
 }
 
 func acquireSession(
 	t *testing.T,
-	database *sql.DB,
-	mock sqlmock.Sqlmock,
+	database *postgres.MockPool,
+	mock *postgres.MockConn,
 ) migrations.Session {
 	t.Helper()
 
-	backend, err := postgres.New(database)
+	backend, err := postgres.NewMockBackend(database)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+		WithArgs(postgres.MockAnyArg()).
+		WillReturnRows(postgres.NewMockRows([]string{"pg_try_advisory_lock"}).AddRow(true))
 
 	session, err := backend.Acquire(context.Background())
 	if err != nil {
@@ -626,19 +625,29 @@ func newMigration(t *testing.T, mode migrations.TransactionMode) migrations.Migr
 	return migration
 }
 
-func newMockDatabase(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
+func newMockDatabase(t *testing.T) (*postgres.MockPool, *postgres.MockConn) {
 	t.Helper()
 
-	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
-	if err != nil {
-		t.Fatalf("sqlmock.New() error = %v", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
+	mock := postgres.NewMockConn()
 
-	return database, mock
+	return &postgres.MockPool{Conn: mock}, mock
 }
 
-func assertExpectations(t *testing.T, mock sqlmock.Sqlmock) {
+// unconnectedPool is a real lazily connecting pool for construction tests;
+// any accidental database work fails against the closed port.
+func unconnectedPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	pool, err := pgxpool.New(context.Background(), "postgres://unused@127.0.0.1:1/unused?connect_timeout=1")
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	return pool
+}
+
+func assertExpectations(t *testing.T, mock *postgres.MockConn) {
 	t.Helper()
 
 	if err := mock.ExpectationsWereMet(); err != nil {

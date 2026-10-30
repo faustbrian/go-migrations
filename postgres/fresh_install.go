@@ -2,15 +2,14 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	gooseadapter "github.com/faustbrian/go-migrations/v4/internal/goose"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrInstallOutcomeUnknown means fresh installation may have committed. Read
@@ -32,7 +31,7 @@ var ErrInstallOutcomeUnknown = errors.New("PostgreSQL fresh installation outcome
 //
 // The stable native advisory lock covers discovery, execution and finalization.
 // Work and lock acquisition are bounded by backend policy/context; independent
-// cleanup uses a finite deadline. The database is borrowed and stays open.
+// cleanup uses a finite deadline. The pool is borrowed and stays open.
 // Error formatting redacts SQL/driver diagnostics, but traversal may expose
 // underlying driver causes; do not log unwrapped diagnostics. A commit or
 // post-commit unlock failure
@@ -40,7 +39,7 @@ var ErrInstallOutcomeUnknown = errors.New("PostgreSQL fresh installation outcome
 // deny before IO. Concurrent calls serialize through native migration ownership.
 // This API does not change Runner's individual-migration transaction semantics.
 func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.Migration, preflightSQL string) (records []migrations.Record, err error) {
-	if backend == nil || backend.database == nil || ctx == nil {
+	if backend == nil || backend.pool == nil || ctx == nil {
 		return nil, ErrInvalidConfig
 	}
 	if err := ctx.Err(); err != nil {
@@ -59,7 +58,6 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 		return nil, err
 	}
 	total := len(preflightSQL)
-	adapters := make([]*gooseadapter.Adapter, 0, len(history))
 	for _, step := range history {
 		if step.TransactionMode() != migrations.TransactionModeDefault {
 			return nil, migrations.ErrInvalidTransactionMode
@@ -72,11 +70,6 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 			return nil, migrations.ErrSourceLimit
 		}
 		total += len(step.DownSQL())
-		adapter, compileErr := gooseadapter.Compile(step)
-		if compileErr != nil {
-			return nil, compileErr
-		}
-		adapters = append(adapters, adapter)
 	}
 	owned, err := backend.Acquire(bounded)
 	if err != nil {
@@ -95,12 +88,12 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 			}
 		}
 	}()
-	tx, err := session.connection.BeginTx(bounded, nil)
+	tx, err := session.connection.begin(bounded, pgx.TxOptions{})
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "begin fresh installation", err)
 	}
 	defer func() {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+		if rollbackErr := rollbackTransaction(bounded, tx); rollbackErr != nil {
 			session.tainted = true
 			records = nil
 			err = errors.Join(err, databaseFailure("rollback fresh installation", rollbackErr))
@@ -109,33 +102,36 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 	if err := setLocalStatementTimeout(bounded, tx, backend.statementTimeout); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(bounded, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
+	if _, err := tx.Exec(bounded, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
 		return nil, databaseContextFailure(bounded, "prepare fresh installation ledger", err)
 	}
-	rows, err := tx.QueryContext(bounded, ledgerSQL(ledgerRecordsSQL, session.namespace))
+	rows, err := tx.Query(bounded, ledgerSQL(ledgerRecordsSQL, session.namespace))
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "read fresh installation ledger", err)
 	}
 	existing, readErr := decodeLedgerRows(bounded, rows)
-	closeErr := rows.Close()
-	if readErr != nil || closeErr != nil {
-		return nil, errors.Join(readErr, databaseFailure("close fresh installation ledger", closeErr))
+	rows.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr := rows.Err(); closeErr != nil {
+		return nil, databaseFailure("close fresh installation ledger", closeErr)
 	}
 	if len(existing) != 0 {
 		return nil, ErrLedgerConflict
 	}
 	if preflightSQL != "" {
-		if _, err := tx.ExecContext(bounded, preflightSQL); err != nil {
+		if _, err := tx.Exec(bounded, preflightSQL); err != nil {
 			return nil, databaseContextFailure(bounded, "execute fresh installation preflight", err)
 		}
 	}
 	records = make([]migrations.Record, 0, len(history))
-	for index, step := range history {
+	for _, step := range history {
 		started := time.Now().UTC()
 		if err := insertDirty(bounded, tx, step, started, session.namespace); err != nil {
 			return nil, err
 		}
-		if err := adapters[index].ApplyTx(bounded, tx); err != nil {
+		if err := executeMigrationSQL(bounded, tx, step.UpSQL()); err != nil {
 			return nil, err
 		}
 		finished := time.Now().UTC()
@@ -149,7 +145,7 @@ func (backend *Backend) InstallFresh(ctx context.Context, history []migrations.M
 		}
 		records = append(records, record)
 	}
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(bounded); err != nil {
 		return nil, errors.Join(ErrInstallOutcomeUnknown, databaseContextFailure(bounded, "commit fresh installation", err))
 	}
 	committed = true

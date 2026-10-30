@@ -16,7 +16,7 @@ api:
   baselines:
     - module: .
       mode: go-doc
-      path: api/v4.txt
+      path: api/v5.txt
       packages:
         - .
         - ./adapters/service
@@ -37,6 +37,10 @@ operations:
       - type: make
         makefile: verification/package.mk
         target: engine-boundary
+        timeout: 20m
+      - type: make
+        makefile: verification/package.mk
+        target: interop
         timeout: 20m
   - module: .
     gate: fuzz

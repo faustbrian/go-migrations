@@ -79,7 +79,7 @@ func (s *CommandSession) CatalogPresence(ctx context.Context, objects []CatalogI
 		return nil, err
 	}
 	defer finish()
-	rows, err := s.owned.connection.QueryContext(bounded, `SELECT i.position,
+	rows, err := s.owned.connection.Query(bounded, `SELECT i.position,
  CASE i.kind
  WHEN 1 THEN EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname=i.schema)
  WHEN 2 THEN EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=i.schema AND c.relname=i.name)
@@ -91,7 +91,7 @@ func (s *CommandSession) CatalogPresence(ctx context.Context, objects []CatalogI
 	if err != nil {
 		return nil, databaseContextFailure(bounded, "discover owned catalog presence", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 	result := make([]bool, 0, len(objects))
 	for rows.Next() {
 		var position int

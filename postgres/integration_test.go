@@ -5,7 +5,6 @@ package postgres_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"io/fs"
 	"math"
@@ -18,10 +17,10 @@ import (
 	"testing/fstest"
 	"time"
 
-	migrations "github.com/faustbrian/go-migrations/v4"
-	"github.com/faustbrian/go-migrations/v4/conformance"
-	migrationpostgres "github.com/faustbrian/go-migrations/v4/postgres"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	migrations "github.com/faustbrian/go-migrations/v5"
+	"github.com/faustbrian/go-migrations/v5/conformance"
+	migrationpostgres "github.com/faustbrian/go-migrations/v5/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -67,7 +66,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 				value = database
 			}
 
-			return newIntegrationRunner(t, value.(*sql.DB), files)
+			return newIntegrationRunner(t, value.(*pgxpool.Pool), files)
 		},
 		Exec: func(t *testing.T, statement string) {
 			t.Helper()
@@ -75,7 +74,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 			if !ok {
 				t.Fatal("conformance database not initialized")
 			}
-			if _, err := value.(*sql.DB).ExecContext(context.Background(), statement); err != nil {
+			if _, err := value.(*pgxpool.Pool).Exec(context.Background(), statement); err != nil {
 				t.Fatalf("execute conformance cleanup: %v", err)
 			}
 		},
@@ -126,7 +125,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 			t.Fatalf("Down() error = %v", err)
 		}
 		var ledgerCount int
-		if err := database.QueryRowContext(context.Background(), "SELECT count(*) FROM public.migrations").Scan(&ledgerCount); err != nil {
+		if err := database.QueryRow(context.Background(), "SELECT count(*) FROM public.migrations").Scan(&ledgerCount); err != nil {
 			t.Fatalf("count ledger: %v", err)
 		}
 		if ledgerCount != 0 {
@@ -160,7 +159,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		if _, err := owned.Apply(ctx, migration); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.ExecContext(ctx,
+		if _, err := database.Exec(ctx,
 			"UPDATE public.migrations SET execution_time_ms = $1 WHERE version = 1", int64(math.MaxInt64)); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +168,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		}
 		var dirty, finished, tablePresent bool
 		var duration int64
-		if err := database.QueryRowContext(ctx,
+		if err := database.QueryRow(ctx,
 			"SELECT dirty, finished_at IS NOT NULL, execution_time_ms, to_regclass('public.rollback_duration_probe') IS NOT NULL FROM public.migrations WHERE version = 1",
 		).Scan(&dirty, &finished, &duration, &tablePresent); err != nil {
 			t.Fatal(err)
@@ -218,8 +217,14 @@ func TestPostgresEngineConformance(t *testing.T) {
 	})
 
 	t.Run("single connection pool prepares under lock", func(t *testing.T) {
-		database := isolatedDatabase(t, admin, connectionString, "single_connection")
-		database.SetMaxOpenConns(1)
+		pooled := isolatedDatabase(t, admin, connectionString, "single_connection")
+		config := pooled.Config()
+		config.MaxConns = 1
+		database, err := pgxpool.NewWithConfig(context.Background(), config)
+		if err != nil {
+			t.Fatalf("single-connection pool: %v", err)
+		}
+		t.Cleanup(database.Close)
 		runner := newIntegrationRunner(t, database, fstest.MapFS{
 			"migrations/000001_single_connection.sql": &fstest.MapFile{Data: []byte(
 				"-- +migrations Up\nCREATE TABLE single_connection (id bigint);\n",
@@ -238,7 +243,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 
 	t.Run("ledger ignores hostile search path", func(t *testing.T) {
 		setupDatabase := isolatedDatabase(t, admin, connectionString, "search_path")
-		if _, err := setupDatabase.ExecContext(context.Background(), "CREATE SCHEMA shadow"); err != nil {
+		if _, err := setupDatabase.Exec(context.Background(), "CREATE SCHEMA shadow"); err != nil {
 			t.Fatalf("create shadow schema: %v", err)
 		}
 		connectionURL, err := url.Parse(databaseURL(t, connectionString, "test_search_path"))
@@ -259,7 +264,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		}
 		var publicLedger bool
 		var shadowLedger bool
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT to_regclass('public.migrations') IS NOT NULL, to_regclass('shadow.migrations') IS NOT NULL",
 		).Scan(&publicLedger, &shadowLedger); err != nil {
@@ -276,7 +281,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read historical ledger fixture: %v", err)
 		}
-		if _, err := database.ExecContext(context.Background(), string(ledgerSQL)); err != nil {
+		if _, err := database.Exec(context.Background(), string(ledgerSQL)); err != nil {
 			t.Fatalf("install historical ledger fixture: %v", err)
 		}
 		inspectionBackend, err := migrationpostgres.New(database)
@@ -323,14 +328,14 @@ func TestPostgresEngineConformance(t *testing.T) {
 		if records := result.Records(); len(records) != 1 || records[0].Version() != 2 {
 			t.Fatalf("Up() records = %#v", records)
 		}
-		rows, err := database.QueryContext(
+		rows, err := database.Query(
 			context.Background(),
 			"SELECT version, engine, engine_version FROM public.migrations ORDER BY version",
 		)
 		if err != nil {
 			t.Fatalf("query upgraded ledger: %v", err)
 		}
-		defer func() { _ = rows.Close() }()
+		defer rows.Close()
 		versions := make([]int64, 0, 2)
 		backends := make([]string, 0, 2)
 		engines := make([]string, 0, 2)
@@ -381,7 +386,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 			}
 		}
 		var count int
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT count(*) FROM public.migrations",
 		).Scan(&count); err != nil {
@@ -412,7 +417,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 		var ledgerExists bool
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT to_regclass('public.migrations') IS NOT NULL",
 		).Scan(&ledgerExists); err != nil {
@@ -491,7 +496,7 @@ func TestPostgresEngineConformance(t *testing.T) {
 			t.Fatalf("Acquire() error = %v", err)
 		}
 		var terminated bool
-		if err := database.QueryRowContext(context.Background(), `
+		if err := database.QueryRow(context.Background(), `
 SELECT pg_terminate_backend(activity.pid)
 FROM pg_locks locks
 JOIN pg_stat_activity activity ON activity.pid = locks.pid
@@ -536,7 +541,7 @@ LIMIT 1
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			var ready bool
-			err := database.QueryRowContext(
+			err := database.QueryRow(
 				context.Background(),
 				`SELECT EXISTS (SELECT 1 FROM public.migrations WHERE dirty)`,
 			).Scan(&ready)
@@ -575,7 +580,7 @@ LIMIT 1
 		if len(status.Entries()) != 1 || status.Entries()[0].State() != migrations.StateDirty {
 			t.Fatalf("Status() = %#v, want dirty", status.Entries())
 		}
-		if _, err := database.ExecContext(context.Background(), "DROP TABLE IF EXISTS process_partial"); err != nil {
+		if _, err := database.Exec(context.Background(), "DROP TABLE IF EXISTS process_partial"); err != nil {
 			t.Fatalf("remove partial process effect: %v", err)
 		}
 		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
@@ -628,13 +633,13 @@ SELECT EXISTS (
 
 		var tableExists bool
 		var ledgerRows int
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT to_regclass('public.process_transactional') IS NOT NULL",
 		).Scan(&tableExists); err != nil {
 			t.Fatalf("inspect transactional crash table: %v", err)
 		}
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT count(*) FROM public.migrations",
 		).Scan(&ledgerRows); err != nil {
@@ -670,7 +675,7 @@ SELECT EXISTS (
 		if err := session.Release(context.Background()); err != nil {
 			t.Fatalf("Release() error = %v", err)
 		}
-		if _, err := database.ExecContext(context.Background(), `
+		if _, err := database.Exec(context.Background(), `
 CREATE FUNCTION pause_clean_ledger_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -711,14 +716,14 @@ SELECT EXISTS (
 			t.Fatal("killed clean-update migration process exited successfully")
 		}
 		waitForAdvisoryUnlock(t, database)
-		if _, err := database.ExecContext(context.Background(), `
+		if _, err := database.Exec(context.Background(), `
 DROP TRIGGER pause_clean_ledger_update ON public.migrations;
 DROP FUNCTION pause_clean_ledger_update();
 `); err != nil {
 			t.Fatalf("remove clean-update crash trigger: %v", err)
 		}
 		var dirty bool
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT dirty FROM public.migrations WHERE version = 1",
 		).Scan(&dirty); err != nil {
@@ -771,7 +776,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.ExecContext(ctx, `INSERT INTO public.migrations (version, kind, name, checksum, started_at, execution_time_ms, dirty, engine, engine_version) VALUES (1, 'migration', $1, $2, '1600-01-01T00:00:00Z', 0, true, 'postgres', 'v1')`, migration.Name(), migration.Checksum().String()); err != nil {
+		if _, err := database.Exec(ctx, `INSERT INTO public.migrations (version, kind, name, checksum, started_at, execution_time_ms, dirty, engine, engine_version) VALUES (1, 'migration', $1, $2, '1600-01-01T00:00:00Z', 0, true, 'postgres', 'v1')`, migration.Name(), migration.Checksum().String()); err != nil {
 			t.Fatal(err)
 		}
 		owned, err = backend.Acquire(ctx)
@@ -806,7 +811,7 @@ DROP FUNCTION pause_clean_ledger_update();
 			t.Fatal("Up() error = nil, want transactional failure")
 		}
 		var exists bool
-		if err := database.QueryRowContext(
+		if err := database.QueryRow(
 			context.Background(),
 			"SELECT to_regclass('public.must_rollback') IS NOT NULL",
 		).Scan(&exists); err != nil {
@@ -836,7 +841,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		if len(status.Entries()) != 1 || status.Entries()[0].State() != migrations.StateDirty {
 			t.Fatalf("Status() = %#v, want one dirty entry", status.Entries())
 		}
-		if _, err := database.ExecContext(context.Background(), "DROP TABLE IF EXISTS partial_effect"); err != nil {
+		if _, err := database.Exec(context.Background(), "DROP TABLE IF EXISTS partial_effect"); err != nil {
 			t.Fatalf("remove reviewed partial effect: %v", err)
 		}
 		source, err := migrations.NewFSSource(integrationSourceFileSystem{files: files}, "migrations")
@@ -862,7 +867,7 @@ DROP FUNCTION pause_clean_ledger_update();
 
 	t.Run("baseline rejects drift then preserves Laravel history", func(t *testing.T) {
 		database := isolatedDatabase(t, admin, connectionString, "baseline")
-		if _, err := database.ExecContext(
+		if _, err := database.Exec(
 			context.Background(),
 			"CREATE TABLE laravel_migrations (id serial PRIMARY KEY, migration text NOT NULL, batch integer NOT NULL);"+
 				"INSERT INTO laravel_migrations (migration, batch) VALUES ('2020_01_01_000000_create_users', 1);"+
@@ -882,7 +887,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		if err != nil {
 			t.Fatalf("InspectObjects() error = %v", err)
 		}
-		if _, err := database.ExecContext(context.Background(), "ALTER TABLE users ADD COLUMN drift text"); err != nil {
+		if _, err := database.Exec(context.Background(), "ALTER TABLE users ADD COLUMN drift text"); err != nil {
 			t.Fatalf("introduce drift: %v", err)
 		}
 		baseline, err := migrations.NewBaseline(100, "laravel_production_v1", fingerprint)
@@ -895,7 +900,7 @@ DROP FUNCTION pause_clean_ledger_update();
 		if _, err := runner.Baseline(context.Background(), baseline); !errors.Is(err, migrations.ErrBaselineMismatch) {
 			t.Fatalf("Baseline(drift) error = %v, want ErrBaselineMismatch", err)
 		}
-		if _, err := database.ExecContext(context.Background(), "ALTER TABLE users DROP COLUMN drift"); err != nil {
+		if _, err := database.Exec(context.Background(), "ALTER TABLE users DROP COLUMN drift"); err != nil {
 			t.Fatalf("remove drift: %v", err)
 		}
 		afterObjects, err := backend.InspectObjects(context.Background())
@@ -909,7 +914,7 @@ DROP FUNCTION pause_clean_ledger_update();
 			t.Fatalf("Baseline() error = %v", err)
 		}
 		var laravelRows int
-		if err := database.QueryRowContext(context.Background(), "SELECT count(*) FROM laravel_migrations").Scan(&laravelRows); err != nil {
+		if err := database.QueryRow(context.Background(), "SELECT count(*) FROM laravel_migrations").Scan(&laravelRows); err != nil {
 			t.Fatalf("query Laravel migrations: %v", err)
 		}
 		if laravelRows != 1 {
@@ -919,7 +924,7 @@ DROP FUNCTION pause_clean_ledger_update();
 
 	t.Run("baseline fixtures fail closed outside exact Laravel schema", func(t *testing.T) {
 		expectedDatabase := isolatedDatabase(t, admin, connectionString, "baseline_expected")
-		if _, err := expectedDatabase.ExecContext(
+		if _, err := expectedDatabase.Exec(
 			context.Background(),
 			readSQLFixture(t, "testdata/laravel/exact.sql"),
 		); err != nil {
@@ -960,7 +965,7 @@ DROP FUNCTION pause_clean_ledger_update();
 					connectionString,
 					"baseline_"+strings.ReplaceAll(test.name, " ", "_"),
 				)
-				if _, err := database.ExecContext(
+				if _, err := database.Exec(
 					context.Background(),
 					readSQLFixture(t, "testdata/laravel/"+test.fixture),
 				); err != nil {
@@ -1009,7 +1014,7 @@ DROP FUNCTION pause_clean_ledger_update();
 			t.Fatal("Up() error = nil, want statement timeout")
 		}
 		var count int
-		if err := database.QueryRowContext(context.Background(), "SELECT count(*) FROM public.migrations").Scan(&count); err != nil {
+		if err := database.QueryRow(context.Background(), "SELECT count(*) FROM public.migrations").Scan(&count); err != nil {
 			t.Fatalf("count timeout ledger: %v", err)
 		}
 		if count != 0 {
@@ -1084,7 +1089,7 @@ func cleanUpdateMigrationFiles() fstest.MapFS {
 
 func newIntegrationRunner(
 	t *testing.T,
-	database *sql.DB,
+	database *pgxpool.Pool,
 	files fstest.MapFS,
 ) *migrations.Runner {
 	t.Helper()
@@ -1163,14 +1168,14 @@ func (filesystem integrationSourceFileSystem) ReadFile(
 
 func isolatedDatabase(
 	t *testing.T,
-	admin *sql.DB,
+	admin *pgxpool.Pool,
 	connectionString string,
 	suffix string,
-) *sql.DB {
+) *pgxpool.Pool {
 	t.Helper()
 
 	name := "test_" + strings.ReplaceAll(suffix, "-", "_")
-	if _, err := admin.ExecContext(context.Background(), "CREATE DATABASE "+name); err != nil {
+	if _, err := admin.Exec(context.Background(), "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database %s: %v", name, err)
 	}
 	return openDatabase(t, databaseURL(t, connectionString, name))
@@ -1188,17 +1193,17 @@ func databaseURL(t *testing.T, connectionString string, databaseName string) str
 	return parsed.String()
 }
 
-func openDatabase(t *testing.T, connectionString string) *sql.DB {
+func openDatabase(t *testing.T, connectionString string) *pgxpool.Pool {
 	t.Helper()
 
-	database, err := sql.Open("pgx", connectionString)
-	if err != nil {
-		t.Fatalf("sql.Open() error = %v", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := database.PingContext(ctx); err != nil {
+	database, err := pgxpool.New(ctx, connectionString)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	t.Cleanup(database.Close)
+	if err := database.Ping(ctx); err != nil {
 		t.Fatalf("database ping: %v", err)
 	}
 
@@ -1207,7 +1212,7 @@ func openDatabase(t *testing.T, connectionString string) *sql.DB {
 
 func waitForDatabaseCondition(
 	t *testing.T,
-	database *sql.DB,
+	database *pgxpool.Pool,
 	command *exec.Cmd,
 	output *bytes.Buffer,
 	query string,
@@ -1217,7 +1222,7 @@ func waitForDatabaseCondition(
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var ready bool
-		err := database.QueryRowContext(context.Background(), query).Scan(&ready)
+		err := database.QueryRow(context.Background(), query).Scan(&ready)
 		if err == nil && ready {
 			return
 		}
@@ -1230,13 +1235,13 @@ func waitForDatabaseCondition(
 	}
 }
 
-func waitForAdvisoryUnlock(t *testing.T, database *sql.DB) {
+func waitForAdvisoryUnlock(t *testing.T, database *pgxpool.Pool) {
 	t.Helper()
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		var released bool
-		err := database.QueryRowContext(context.Background(), `
+		err := database.QueryRow(context.Background(), `
 SELECT NOT EXISTS (
     SELECT 1
     FROM pg_locks locks
@@ -1267,11 +1272,11 @@ func readSQLFixture(t *testing.T, filename string) string {
 	return string(contents)
 }
 
-func laravelHistory(t *testing.T, database *sql.DB) string {
+func laravelHistory(t *testing.T, database *pgxpool.Pool) string {
 	t.Helper()
 
 	var history string
-	if err := database.QueryRowContext(
+	if err := database.QueryRow(
 		context.Background(),
 		"SELECT COALESCE(string_agg(migration || ':' || batch::text, ',' ORDER BY id), '') FROM laravel_migrations",
 	).Scan(&history); err != nil {

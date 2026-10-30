@@ -5,18 +5,18 @@
 [![Coverage](https://img.shields.io/badge/coverage-risk_selected-blue)](CONTRIBUTING.md#verification)
 [![Mutation](https://img.shields.io/badge/mutation-optional_local%2Fselected_scheduled-blue)](CONTRIBUTING.md#verification)
 [![Documentation](https://img.shields.io/badge/docs-checked_in_CI-blue)](docs/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v4.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4)
+[![Go Reference](https://pkg.go.dev/badge/github.com/faustbrian/go-migrations/v5.svg)](https://pkg.go.dev/github.com/faustbrian/go-migrations/v5)
 [![Release](https://img.shields.io/github/v/release/faustbrian/go-migrations?sort=semver)](https://github.com/faustbrian/go-migrations/releases)
 [![Go](https://img.shields.io/badge/go-1.27.0-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `migrations` is an engine-neutral database migration runtime with a
-PostgreSQL backend. It owns migration identity, planning, status, locking,
-checksums, baselines, recovery, and the `public.migrations` ledger.
-Goose is an internal, pinned SQL execution detail and never appears in the
-public API.
+PostgreSQL backend driven by [pgx](https://github.com/jackc/pgx) v5. It owns
+migration identity, planning, status, locking, checksums, baselines, recovery,
+and the `public.migrations` ledger. The backend takes a caller-owned
+`*pgxpool.Pool`; it does not use `database/sql` or any other driver.
 
-This source tree contains the `github.com/faustbrian/go-migrations/v4` module.
+This source tree contains the `github.com/faustbrian/go-migrations/v5` module.
 V3.0.0 introduces the `public.migrations` ledger name. Published v1 and v2
 releases remain available under their original module paths.
 Application adoption is a separate deployment boundary. The minimum
@@ -25,16 +25,17 @@ fixes GO-2026-6809 in `crypto/x509`.
 
 ## Install
 
-Install the v4 module with:
+Install the v5 module with:
 
 ```sh
-go get github.com/faustbrian/go-migrations/v4@v4.0.0
+go get github.com/faustbrian/go-migrations/v5
 ```
 
-V3 consumers upgrade by replacing `/v3` with `/v4` in imports and moving
-service composition to the single Service v3 adapter (see
-[migration](docs/compatibility.md#v3-to-v4)). The ledger, checksums and
-advisory lock are unchanged, so no database alignment is required. V2 consumers
+V4 consumers upgrade by replacing `/v4` with `/v5` in imports and passing a
+`*pgxpool.Pool` to `postgres.New` instead of a `*sql.DB` (see
+[migration](docs/compatibility.md#v4-to-v5)). The ledger, checksums and
+advisory lock are unchanged, so no database alignment is required. V3 consumers
+first apply the [v3 to v4 migration](docs/compatibility.md#v3-to-v4). V2 consumers
 upgrade by replacing `/v2` with `/v3` in migration imports, stopping older
 runners, and manually aligning the database ledger before starting v3. V1
 consumers must also provide the bounded, cancellation-aware `SourceFileSystem` contract and review the
@@ -47,7 +48,7 @@ The supported Go and PostgreSQL versions are documented in
 ## Quick start
 
 The complete [embedded-migrations job](examples/job/main.go) is the
-compiler-built quick start. It opens a caller-owned `*sql.DB`, constructs the
+compiler-built quick start. It opens a caller-owned `*pgxpool.Pool`, constructs the
 filesystem source, PostgreSQL backend, and runner, inspects the plan, applies
 pending migrations, and reads final status. From a checkout, point it at a
 disposable PostgreSQL database:
@@ -63,14 +64,14 @@ dedicated deployment job; do not run it implicitly in every service process.
 
 ## Packages
 
-The v4 module uses these import paths.
+The v5 module uses these import paths.
 
 | Import path | Use |
 | --- | --- |
-| `github.com/faustbrian/go-migrations/v4` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
-| `github.com/faustbrian/go-migrations/v4/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
-| `github.com/faustbrian/go-migrations/v4/adapters/service` | Adapt a caller-constructed runner to the standard one-shot Service v3 migrate command. |
-| `github.com/faustbrian/go-migrations/v4/conformance` | Verify an alternative backend against the public engine contract in tests. |
+| `github.com/faustbrian/go-migrations/v5` | Define immutable migrations, load sources, plan, inspect status, apply, roll back, baseline, and recover. |
+| `github.com/faustbrian/go-migrations/v5/postgres` | Persist the owned ledger and execute migrations under a PostgreSQL advisory lock. |
+| `github.com/faustbrian/go-migrations/v5/adapters/service` | Adapt a caller-constructed runner to the standard one-shot Service v3 migrate command. |
+| `github.com/faustbrian/go-migrations/v5/conformance` | Verify an alternative backend against the public engine contract in tests. |
 
 `examples/job` is an executable integration example, not a reusable package.
 
@@ -80,9 +81,9 @@ Use this module when an application needs immutable embedded SQL migrations,
 an owned PostgreSQL ledger, deterministic plans, and explicit dirty-state
 recovery. Use the conformance package when replacing the execution backend.
 Do not use it as an ORM, schema declaration language, service-startup hook, or
-wrapper around Laravel or Goose migration history. Deployment orchestration,
-retry policy, and ownership of the application database remain outside this
-module.
+wrapper around Laravel or Goose migration history, and do not use it with
+`database/sql` or a non-PostgreSQL database. Deployment orchestration, retry
+policy, and ownership of the application pool remain outside this module.
 
 ## Construction and lifecycle
 
@@ -112,7 +113,9 @@ Runner and PostgreSQL backend functional options are applied from left to
 right. Construction stops at the first nil or failing option, so later options
 do not run; repeated valid settings use the last applied value. Neither
 constructor acquires a migration lock, runs SQL, or takes ownership of the
-caller-provided database while applying options.
+caller-provided pool while applying options. Each migration session leases one
+pool connection for its whole lifetime, so size the pool for concurrent
+sessions plus schema inspection and ledger discovery.
 
 Every plan, status, apply, rollback, baseline, and recovery operation accepts
 the caller's `context.Context`. It acquires one connection-bound session,
@@ -129,13 +132,14 @@ and independent failures without exposing driver diagnostics. A context match
 alone does not prove caller interruption: check the caller's context and all
 remaining causes before treating a failure as a clean cancellation.
 
-Go's standard `database/sql` transaction finalization and cleanup calls cannot
-accept a context once driver cleanup begins. Use maintained drivers with
-finite server and network timeouts plus a supervised deployment-process hard
-deadline, and inspect database and ledger state before retry after expiry.
+Transaction rollback and the close that discards an uncertain session run on a
+detached 30-second deadline, so they complete after caller cancellation without
+blocking forever. Keep finite server and network timeouts plus a supervised
+deployment-process hard deadline, and inspect database and ledger state before
+retry after expiry.
 
 The runner starts no goroutines and has no `Close` or `Shutdown` method. The
-caller retains the source, observer, and `*sql.DB` and must close the database.
+caller retains the source, observer, and `*pgxpool.Pool` and must close the pool.
 Concurrent operations are serialized by the backend's advisory lock. An
 observer may be called concurrently when callers share a runner. Events have no
 SQL field, but custom dependency errors can contain sensitive text, and traversing
@@ -168,7 +172,7 @@ recovery behavior explicitly according to the reviewed operation.
 - [`go-service`](https://github.com/faustbrian/go-service) supplies the
   one-shot command contract used by `adapters/service`.
 - [`go-postgres`](https://github.com/faustbrian/go-postgres) can supply the
-  caller-owned `*sql.DB`; the [integration guide](docs/go-postgres.md) keeps
+  caller-owned `*pgxpool.Pool`; the [integration guide](docs/go-postgres.md) keeps
   the two libraries as sibling dependencies.
 - [`go-idempotency`](https://github.com/faustbrian/go-idempotency) and
   [`go-transactional-outbox`](https://github.com/faustbrian/go-transactional-outbox)
@@ -214,10 +218,10 @@ Read the [migration format](docs/migration-format.md),
 
 Start with the [documentation index](docs/README.md). It organizes migration
 formats, PostgreSQL integration, production operations, Laravel adoption, and
-maintainer references. The v4
-[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4),
+maintainer references. The v5
+[API reference](https://pkg.go.dev/github.com/faustbrian/go-migrations/v5),
 [executable example](examples/job/main.go), backend
-[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v4/conformance),
+[testing helper](https://pkg.go.dev/github.com/faustbrian/go-migrations/v5/conformance),
 [FAQ and troubleshooting](docs/faq.md), [performance baselines](docs/benchmarks.md),
 [compatibility policy](COMPATIBILITY.md), [changelog](CHANGELOG.md),
 [support guide](SUPPORT.md), and [private security-reporting process](SECURITY.md)
@@ -232,7 +236,8 @@ and its [Persistence and durability family](https://github.com/faustbrian/go-lib
 `make check` and `make ci` use the published tool pinned in `.golib.yaml` for
 bounded verification with PostgreSQL fixtures, the `integration` tag and
 deterministic operation-gate cancellation/session-ownership assertions. The
-unchanged cheap engine-boundary guard remains required locally and in CI.
+cheap engine-boundary guard, which keeps `database/sql`, other drivers and
+the retired Goose engine out of the module, remains required locally and in CI.
 Base-free checks run fuzz seeds; changed-source CI selects active smoke.
 `make check-full` retains all explicit full campaigns. Scheduled CI uses the
 shared bounded route. See [contributor verification](CONTRIBUTING.md#verification)
