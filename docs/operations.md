@@ -78,6 +78,15 @@ ledger state. Source is loaded before acquisition and must remain an immutable
 deployment artifact. Both calls can create the owned ledger, and neither
 reserves state for a later execution call.
 
+Preparation inspects the exact selected relation in `public` on the acquired
+connection. An existing table does not require schema `CREATE`; retain schema
+`USAGE`, the necessary ledger-table privileges and the privileges for the
+reviewed migration SQL. Only an absent selected ledger takes the creation path.
+A view or another non-table relation at that name returns `ErrLedgerConflict`.
+An existing table still undergoes the ordinary records/history/checksum checks.
+This applies to the shared runner path, not the separate `InstallFresh` and
+command-receipt APIs. No grants, history adoption or ledger renaming are automatic.
+
 ## Atomic initial installation
 
 Some packages reserve shared prerequisites, such as PostgreSQL roles, which

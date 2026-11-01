@@ -22,10 +22,15 @@ nonblocking, or use an application-owned bounded nonblocking handoff. A blocked
 observer can delay migration completion and advisory-lock release; the runner
 cannot forcibly interrupt it. Cleanup events use a context detached from caller
 cancellation, so observer implementations need their own finite work bound.
-The role must be able to create and use `public.migrations`; ledger
-queries explicitly qualify `public` and do not trust the connection's
-`search_path`. Existing deployments must align their ledger manually before
-starting v3; the runner never discovers or renames another table.
+The runner role needs schema `CREATE` only when its selected ledger is absent.
+For an existing ledger, retain schema `USAGE`, the table privileges needed by
+the requested operation, and the privileges required by the migration SQL.
+Preparation checks the exact relation in `public`; a non-table relation is a
+conflict, not an empty ledger. Ledger queries explicitly qualify `public` and
+do not trust the connection's `search_path`. This does not relax the separate
+creation rules for `InstallFresh` or command-receipt APIs. Existing deployments
+must align their ledger manually before starting v3; the runner never discovers
+or renames another table or bypasses history/checksum validation.
 
 The parser rejects ambiguous filenames, directives, encodings, unrelated
 entries, and oversized files. The planner fails closed on history divergence.

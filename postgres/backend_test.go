@@ -30,6 +30,8 @@ func TestSessionPrepareCreatesOnlyOwnedLedgerOnLockConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
+	mock.ExpectQuery("pg_catalog.pg_class").WithArgs("migrations").
+		WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
 	mock.ExpectExec("^" + regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -54,6 +56,8 @@ func TestSessionOperationTimeoutCancelsLedgerPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
+	mock.ExpectQuery("pg_catalog.pg_class").WithArgs("migrations").
+		WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
 	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS public.migrations")).
 		WillDelayFor(time.Second).
 		WillReturnResult(sqlmock.NewResult(0, 0))

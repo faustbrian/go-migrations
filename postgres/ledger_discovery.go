@@ -58,7 +58,9 @@ func readOwnedLedger(bounded context.Context, database ledgerBeginner, namespace
 	}()
 	var kind string
 	err = tx.QueryRowContext(bounded, `SELECT c.relkind::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='`+ledgerName(namespace)+`'`).Scan(&kind)
-	if errors.Is(err, sql.ErrNoRows) {
+	// A joined driver failure is not an empty result, even if one cause is
+	// ErrNoRows. Keep those failures visible instead of reporting empty history.
+	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {

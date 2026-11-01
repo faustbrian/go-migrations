@@ -116,7 +116,7 @@ func databaseContextFailure(ctx context.Context, operation string, cause error) 
 	return failure
 }
 
-// Ledger creation runs on the advisory-lock connection before any history reads.
+// Ledger creation, when needed, runs on the advisory-lock connection before history reads.
 const createLedgerSQL = `CREATE TABLE IF NOT EXISTS public.migrations (
     version bigint PRIMARY KEY CHECK (version > 0),
     kind text NOT NULL CHECK (kind IN ('migration', 'baseline')),
@@ -232,7 +232,9 @@ func New(database *sql.DB, options ...Option) (*Backend, error) {
 }
 
 // Prepare creates the selected ledger if absent on the advisory-lock connection.
-// Existing Laravel history must be relocated first.
+// Existing tables need ledger privileges, not schema CREATE. A different relation
+// kind at the selected name returns ErrLedgerConflict. Existing Laravel history
+// must be relocated first; a table here is not proof of compatible history.
 func (session *session) Prepare(ctx context.Context) error {
 	operationCtx, finish, err := session.beginOperation(ctx)
 	if err != nil {
@@ -241,6 +243,25 @@ func (session *session) Prepare(ctx context.Context) error {
 	defer finish()
 	if session.released || session.connection == nil {
 		return ErrSessionReleased
+	}
+	// PostgreSQL checks schema CREATE even for CREATE TABLE IF NOT EXISTS;
+	// inspect the exact public relation so existing-ledger owners can run after
+	// bootstrap CREATE has been revoked (prepare_existing_integration_test.go).
+	var kind string
+	err = session.connection.QueryRowContext(operationCtx,
+		`SELECT c.relkind::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`,
+		ledgerName(session.namespace),
+	).Scan(&kind)
+	if err == nil {
+		if kind != "r" && kind != "p" {
+			return ErrLedgerConflict
+		}
+		return nil
+	}
+	// Only Row.Scan's plain empty-result sentinel proves absence; a joined
+	// driver failure must not authorize creation or lose its independent cause.
+	if err != sql.ErrNoRows {
+		return databaseContextFailure(operationCtx, "discover migration ledger", err)
 	}
 	if _, err := session.connection.ExecContext(operationCtx, ledgerSQL(createLedgerSQL, session.namespace)); err != nil {
 		return databaseContextFailure(operationCtx, "create migration ledger", err)

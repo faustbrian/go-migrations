@@ -300,6 +300,8 @@ func TestBackendAndLockFailuresAreExplicit(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	prepareSession, prepareMock := faultSession(t, 0)
+	prepareMock.ExpectQuery("pg_catalog.pg_class").WithArgs("migrations").
+		WillReturnRows(sqlmock.NewRows([]string{"relkind"}))
 	prepareMock.ExpectExec("CREATE TABLE IF NOT EXISTS public.migrations").WillReturnError(fault)
 	if err := prepareSession.Prepare(context.Background()); !errors.Is(err, fault) {
 		t.Fatalf("Prepare() error = %v, want injected fault", err)

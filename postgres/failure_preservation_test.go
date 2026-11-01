@@ -116,7 +116,7 @@ func TestTransactionalOperationsPreserveExplicitRollbackFailure(t *testing.T) {
 
 func assertPrivateFailureRedacted(t *testing.T, err error) {
 	t.Helper()
-	for _, format := range []string{"%v", "%+v", "%#v"} {
+	for _, format := range []string{"%v", "%+v", "%#v", "%q"} {
 		if strings.Contains(fmt.Sprintf(format, err), "private") {
 			t.Fatalf("format %s disclosed a driver diagnostic", format)
 		}

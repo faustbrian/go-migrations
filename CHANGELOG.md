@@ -5,6 +5,20 @@ and Semantic Versioning.
 
 ## Unreleased
 
+## 4.0.1 - 2026-11-01
+
+### Fixed
+
+- Prepare an existing PostgreSQL runner ledger without requiring schema
+  `CREATE` after bootstrap privileges have been revoked. Inspect the exact
+  default or namespaced relation under the acquired advisory lock; reject
+  non-table relations and preserve catalog failures. Missing ledgers still
+  require creation privileges, and ledger history, migration privileges,
+  checksums, timeouts and separate installation/command APIs are unchanged.
+- Preserve independent catalog failures joined with `sql.ErrNoRows` in runner
+  preparation and read-only ledger discovery instead of treating them as an
+  absent ledger. Cleanup failures and redacted error categories remain visible.
+
 ## 4.0.0 - 2026-10-22
 
 ### Removed
